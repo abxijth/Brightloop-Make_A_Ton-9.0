@@ -1,3 +1,6 @@
+from datetime import date
+from decimal import Decimal
+
 from pydantic import BaseModel
 
 
@@ -19,3 +22,22 @@ class BillingRunResultOut(BaseModel):
 class BillingRunRequest(BaseModel):
     subscription_ids: list[int] | None = None
     confirm: bool = False
+
+
+class DueSubscriptionOut(BaseModel):
+    """One subscription that is due for billing today."""
+
+    subscription_id: int
+    subscription_number: str
+    customer_name: str
+    plan_name: str
+    next_billing_date: date
+    period_start: date
+    period_end: date
+    estimated_total: Decimal
+    already_billed: bool
+
+
+class BillingDueListOut(BaseModel):
+    items: list[DueSubscriptionOut]
+    count: int

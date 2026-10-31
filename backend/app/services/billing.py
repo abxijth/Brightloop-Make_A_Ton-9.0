@@ -254,6 +254,7 @@ def due_subscriptions(db: Session, today: date) -> list[Subscription]:
         .order_by(Subscription.next_billing_date, Subscription.id)
         .options(
             joinedload(Subscription.plan),
+            joinedload(Subscription.customer),
             selectinload(Subscription.lines)
             .joinedload(SubscriptionLine.product)
             .joinedload(Product.tax),
@@ -261,6 +262,66 @@ def due_subscriptions(db: Session, today: date) -> list[Subscription]:
         )
     )
     return list(db.scalars(statement).unique())
+
+
+@dataclass(frozen=True)
+class DueItem:
+    """Summary row returned by :func:`list_due_subscriptions`."""
+
+    subscription_id: int
+    subscription_number: str
+    customer_name: str
+    plan_name: str
+    next_billing_date: date
+    period_start: date
+    period_end: date
+    estimated_total: Decimal
+    already_billed: bool
+
+
+def list_due_subscriptions(db: Session, today: date | None = None) -> list[DueItem]:
+    """Return all due subscriptions with estimated billing amounts and duplicate flag.
+
+    The ``already_billed`` flag is True when an invoice already exists for this
+    subscription + period_start pair — i.e. a second billing run would skip it.
+    """
+    from sqlalchemy import exists
+
+    from app.models.invoice import Invoice  # avoid circular at module level
+
+    billing_date = today or date.today()
+    subscriptions = due_subscriptions(db, billing_date)
+    items: list[DueItem] = []
+    for sub in subscriptions:
+        if sub.plan is None or sub.next_billing_date is None:
+            continue
+        period_start = sub.next_billing_date
+        p_end = period_end(period_start, sub.plan.billing_period)
+        estimated = money(
+            sum((line.unit_price * line.quantity for line in sub.lines), Decimal("0"))
+        )
+        already = bool(
+            db.scalar(
+                exists(Invoice)
+                .where(Invoice.subscription_id == sub.id)
+                .where(Invoice.period_start == period_start)
+                .select()
+            )
+        )
+        items.append(
+            DueItem(
+                subscription_id=sub.id,
+                subscription_number=sub.number,
+                customer_name=sub.customer.name if sub.customer else "",
+                plan_name=sub.plan.name,
+                next_billing_date=period_start,
+                period_start=period_start,
+                period_end=p_end,
+                estimated_total=estimated,
+                already_billed=already,
+            )
+        )
+    return items
 
 
 def _close_if_finished(subscription: Subscription) -> None:
