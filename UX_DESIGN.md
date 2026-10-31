@@ -4,7 +4,7 @@ Source requirements are in `PROBLEM_STATEMENT.md`. Stack is in `TECH_STACK.md`; 
 
 This is the scoped-down version for an 8-hour hackathon. Anything cut is listed in section 6 ("Later") so nothing is lost.
 
-## 1. Wow moments (protect these)
+## 1. Key demo features (protect these)
 
 These are what we show, so they get polish time first. Everything else exists to support them.
 
@@ -68,7 +68,7 @@ These are what we show, so they get polish time first. Everything else exists to
 - Subscriptions get their own number. List views show colored status badges and a status filter.
 - Print is the browser print dialog with a print stylesheet.
 
-### 3.4 Billing run (wow moment 1)
+### 3.4 Billing run (key feature 1)
 - The **Billing Run** page lists every due subscription with a checkbox, the expected amount and a warning if the period was already billed.
 - Options: "Select all", and a checkbox "Confirm invoices after creating" (so hundreds of invoices don't need individual confirming).
 - "Generate invoices" shows a progress state, then a results summary: **created, skipped, failed** counts, with a list of skipped and failed items and their reasons.
@@ -79,7 +79,7 @@ These are what we show, so they get polish time first. Everything else exists to
 - The detail page has a Draft → Confirmed → Paid stepper and an action bar: Confirm, Send (adds an Outbox entry), Print, Cancel. Only valid actions are enabled.
 - **Overdue** is a red badge derived from the due date. It is not a separate status.
 - The list has filters (status, customer, date range), search, sorting, and an **Overdue** quick filter showing days overdue.
-- The totals panel shows Subtotal, Discount, Tax and Total. Discounts appear as their own line with the rule name (wow moment 2).
+- The totals panel shows Subtotal, Discount, Tax and Total. Discounts appear as their own line with the rule name (key feature 2).
 
 ### 3.6 Payments
 - "Register payment" on an invoice (and on overdue rows in the dashboard) opens a side drawer: method, amount (prefilled with the balance due), date, note.
@@ -100,7 +100,7 @@ These are what we show, so they get polish time first. Everything else exists to
 - **Invoices:** view, print, and "Pay now" for unpaid invoices.
 - **Nav:** My Subscriptions, Invoices, Account.
 
-### 3.10 Mock checkout (wow moment 3)
+### 3.10 Mock checkout (key feature 3)
 - "Pay now" opens a checkout that says **Test mode, no real money is charged**.
 - It shows the invoice number and the amount due (prefilled with the balance, editable down for a partial payment), with a simple card-style form.
 - **Simulate success** and **Simulate failure** buttons make the demo predictable.
@@ -116,7 +116,7 @@ These are what we show, so they get polish time first. Everything else exists to
 ### 3.12 Customers (Back-office)
 - A customer page with a header (name, email, outstanding balance) and tabs for Subscriptions, Invoices and Payments, with "New subscription" and "Register payment" shortcuts.
 
-### 3.13 Finance dashboard (Admin; wow moment 4)
+### 3.13 Finance dashboard (Admin; key feature 4)
 - KPI cards: Active subscriptions, MRR, Revenue collected, Outstanding, Overdue count.
 - Below: a revenue-over-time chart and an overdue invoices table with a "Register payment" action.
 - One date-range filter drives everything. Each KPI links to the filtered list behind it.
@@ -126,7 +126,7 @@ These are what we show, so they get polish time first. Everything else exists to
 ### Lists (subscriptions, invoices, payments, customers)
 - Server-side pagination (25 rows), filters, search and sortable columns. Filter state lives in the URL.
 - Skeleton loaders. On mobile, rows collapse into stacked cards.
-- Target: under 2 seconds with thousands of rows (wow moment 5).
+- Target: under 2 seconds with thousands of rows (key feature 5).
 
 ### Validation and feedback
 - Fields validate on blur, with the message under the field. Submit is blocked until the form is valid.
@@ -155,9 +155,9 @@ These are what we show, so they get polish time first. Everything else exists to
 2. Auth, roles, signup and password reset (with Outbox).
 3. Catalog (products, variants, plans, taxes).
 4. Subscriptions with the stepper.
-5. Billing run (wow 1 and 2), with the discount rule.
-6. Invoices and payments, then mock checkout in the portal (wow 3).
-7. Dashboard (wow 4).
+5. Billing run (key features 1 and 2), with the discount rule.
+6. Invoices and payments, then mock checkout in the portal (key feature 3).
+7. Dashboard (key feature 4).
 8. Polish: dark mode, empty states, the demo script.
 
 ## 6. Later (cut from the MVP)

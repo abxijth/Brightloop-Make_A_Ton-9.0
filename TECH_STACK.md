@@ -22,7 +22,7 @@ Decisions from the tech-stack discussion, scoped for an 8-hour hackathon. UX is 
 - **Vite instead of Next.js.** With a separate API, Next's server features would go unused, so plain React with Vite is simpler.
 - **PostgreSQL.** Billing needs transactions and constraints (see section 5).
 - **Newer tech only where it adds value.** No microservices, GraphQL, queues or real-time sockets. Normal fetching with pagination meets the two-second target.
-- **Boring where time matters.** No PDF library, no email server, no job scheduler, no payment gateway. Each is replaced by something simpler (sections 4 and 10) so time goes into the wow moments in `UX_DESIGN.md`.
+- **Boring where time matters.** No PDF library, no email server, no job scheduler, no payment gateway. Each is replaced by something simpler (sections 4 and 10) so time goes into the key demo features in `UX_DESIGN.md`.
 
 ## 3. Repository: single repo (monorepo)
 

@@ -6,17 +6,16 @@ Who builds what, in what order, and where the pieces meet. Companion to `UX_DESI
 
 - **Vertical slices.** Each member owns a feature area end to end: API, data and UI.
 - **Parallel foundations in hour 1.** Nobody waits for a group setup. Each member builds one foundation piece, then moves into their slice.
-- **One schema, one owner at a time.** The initial migration is written once, by Member 2, at the end of hour 1. After that, schema changes go through pull requests (see section 6).
-- **The wow moments in `UX_DESIGN.md` section 1 are the priority**, and each has a named owner (section 5).
+- **One schema, one owner at a time.** The initial migration is written once, by Member 2, at the end of hour 1. After that, schema changes go through pull requests (see section 7).
 
 ## 2. Roles at a glance
 
-| Member | First-hour foundation | Slice owned | Wow moments owned |
-|---|---|---|---|
-| **1: Platform and identity** | Repo skeleton, `docker-compose`, README, backend app structure, auth and role dependencies | Auth, signup and reset, staff, customers, Outbox | Password reset that works (7) |
-| **2: Catalog and discounts** | Models for identity, catalog and discounts, plus the single initial Alembic migration | Products, variants, plans, taxes, discounts | Discount appears on its own (2) |
-| **3: Subscriptions and billing** | Models for subscriptions, templates and invoices, plus the seed script outline | Subscriptions, templates (seeded), billing run, seed volume | One-click billing day (1), status stepper for subscriptions (6), fast with thousands of rows (5) |
-| **4: Frontend shell, money and reporting** | Vite, Tailwind, shadcn/ui, theme tokens, both layouts, routing by role, shared components | Invoices, payments, portal, mock checkout, dashboard | Customer pays, staff see it (3), finance dashboard (4) |
+| Member | First-hour foundation | Slice owned |
+|---|---|---|
+| **1: Platform and identity** | Repo skeleton, `docker-compose`, README, backend app structure, auth and role dependencies | Auth, signup and reset, staff, customers, Outbox |
+| **2: Catalog and discounts** | Models for identity, catalog and discounts, plus the single initial Alembic migration | Products, variants, plans, taxes, discounts |
+| **3: Subscriptions and billing** | Models for subscriptions, templates and invoices, plus the seed script outline | Subscriptions, templates (seeded), billing run, seed volume |
+| **4: Frontend shell, money and reporting** | Vite, Tailwind, shadcn/ui, theme tokens, both layouts, routing by role, shared components | Invoices, payments, portal, mock checkout, dashboard |
 
 ## 3. Hour-by-hour
 
@@ -27,8 +26,8 @@ Who builds what, in what order, and where the pieces meet. Companion to `UX_DESI
 | **1 to 4** | Slice work, API first, then UI | Merge to `main` at least every 45 minutes. |
 | **4** | **Checkpoint 2** (10 minutes): every slice has a working list page and one create flow against the real API | If a slice is behind, cut scope in `UX_DESIGN.md` section 6 instead of slipping. |
 | **4 to 6** | Finish slices, wire cross-slice flows (section 5), add pytest for the must-not-break logic | Billing, payments and discounts meet here. |
-| **6 to 7** | Wow-moment polish, seed volume check (under 2 seconds), empty states, error states | Members swap and test each other's slices. |
-| **7 to 8** | Dark mode (only if all wow moments pass), README, demo rehearsal, bug fixes | Feature freeze at hour 7. Only bug fixes after that. |
+| **6 to 7** | Polish, seed volume check (under 2 seconds), empty states, error states | Members swap and test each other's slices. |
+| **7 to 8** | Dark mode (only if everything else works), README, demo rehearsal, bug fixes | Feature freeze at hour 7. Only bug fixes after that. |
 
 ## 4. First-hour foundations
 
@@ -113,7 +112,7 @@ Who builds what, in what order, and where the pieces meet. Companion to `UX_DESI
 
 ## 8. Cutting scope
 
-If a slice runs behind at a checkpoint, cut from `UX_DESIGN.md` section 6 in this order, never from the wow moments:
+If a slice runs behind at a checkpoint, cut in this order (see also `UX_DESIGN.md` section 6):
 1. Dark mode.
 2. Customer detail tabs and the global search box.
 3. Staff dashboard variant (show only a plain overdue list).
