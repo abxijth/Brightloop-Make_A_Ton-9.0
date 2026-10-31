@@ -57,3 +57,12 @@ Payments arrive by different methods and on different days. Each one needs to be
 
 How many subscriptions are active? How much revenue came in, and how much is still owed? Which invoices are overdue? Today, answering those questions takes days.
 The finance lead wants one place to see active subscriptions, revenue, payments and overdue invoices, with filters and a summary view. With thousands of subscriptions on the books, every page should still respond in under two seconds.
+
+#### Must have
+
+- Use real-time or dynamic data sources, and avoid relying on static JSON unless it’s for initial prototyping.
+- Create a responsive and clean UI (Consistent color scheme and layout).
+- Validate user input robustly.
+- Use intuitive navigation with proper menu placement and spacing.
+- Use version control (Git) properly; one member managing the repo is not enough.
+- Use trendy technologies only if they add real value to your project.
