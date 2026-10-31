@@ -168,10 +168,10 @@ def test_one_failure_does_not_stop_the_batch(db, monkeypatch) -> None:
 
     original = billing.build_invoice_draft
 
-    def flaky_builder(subscription, today):
+    def flaky_builder(subscription, today, discounts=()):
         if subscription.id == failing.id:
             raise RuntimeError("boom")
-        return original(subscription, today)
+        return original(subscription, today, discounts)
 
     monkeypatch.setattr(billing, "build_invoice_draft", flaky_builder)
 

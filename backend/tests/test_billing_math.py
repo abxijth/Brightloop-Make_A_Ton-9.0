@@ -4,10 +4,17 @@ from decimal import Decimal
 import pytest
 
 from app.models.catalog import Plan, Product, ProductVariant
-from app.models.enums import BillingPeriod, SubscriptionStatus, ValueType
+from app.models.discount import DiscountRule
+from app.models.enums import (
+    BillingPeriod,
+    DiscountScope,
+    SubscriptionStatus,
+    ValueType,
+)
 from app.models.subscription import Subscription, SubscriptionLine
 from app.models.tax import Tax
 from app.services.billing import BillingError, build_invoice_draft
+from app.services.discounts import ApplicableDiscount
 
 TODAY = date(2026, 1, 31)
 
@@ -120,3 +127,28 @@ def test_subscription_without_lines_is_rejected() -> None:
 def test_subscription_without_next_billing_date_is_rejected() -> None:
     with pytest.raises(BillingError, match="next billing date"):
         build_invoice_draft(_subscription(next_billing_date=None), TODAY)
+
+
+def _discount(amount: str, scope=DiscountScope.SUBSCRIPTION, product_id=None):
+    rule = DiscountRule(
+        id=1,
+        name="Promo",
+        type=ValueType.FIXED,
+        value=Decimal(amount),
+        scope=scope,
+        product_id=product_id,
+    )
+    return ApplicableDiscount(rule=rule, amount=Decimal(amount), description="Promo")
+
+
+def test_tax_is_calculated_on_the_discounted_amount() -> None:
+    tax = Tax(name="VAT", type=ValueType.PERCENT, value=Decimal("10.00"))
+    draft = build_invoice_draft(
+        _subscription(tax=tax), TODAY, [_discount("50.00")]
+    )
+
+    assert draft.subtotal == Decimal("200.00")
+    assert draft.discount_total == Decimal("50.00")
+    assert draft.tax_total == Decimal("15.00")  # 10% of (200 - 50)
+    assert draft.total == Decimal("165.00")
+    assert [d.amount for d in draft.discount_lines] == [Decimal("50.00")]

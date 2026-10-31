@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.models.catalog import Product
 from app.models.enums import (
+    DiscountScope,
     InvoiceLineType,
     InvoiceStatus,
     SubscriptionStatus,
@@ -27,6 +28,7 @@ from app.models.enums import (
 from app.models.invoice import Invoice, InvoiceLine
 from app.models.subscription import Subscription, SubscriptionLine
 from app.models.tax import Tax
+from app.services.discounts import ApplicableDiscount, find_applicable_discounts
 from app.services.numbering import next_invoice_number
 from app.services.periods import advance_period, period_end
 
@@ -50,6 +52,13 @@ class DraftLine:
 
 
 @dataclass(frozen=True)
+class DraftDiscountLine:
+    discount_rule_id: int
+    description: str
+    amount: Decimal
+
+
+@dataclass(frozen=True)
 class InvoiceDraft:
     period_start: date
     period_end: date
@@ -60,6 +69,7 @@ class InvoiceDraft:
     discount_total: Decimal
     tax_total: Decimal
     total: Decimal
+    discount_lines: tuple[DraftDiscountLine, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -111,8 +121,47 @@ def _line_tax(line: SubscriptionLine, line_total: Decimal) -> tuple[str | None, 
     return tax.name, None, money(tax.value)
 
 
-def build_invoice_draft(subscription: Subscription, today: date) -> InvoiceDraft:
-    """Build invoice lines and totals without touching the database."""
+def _allocate_discounts(
+    subscription: Subscription,
+    line_totals: list[Decimal],
+    discounts: tuple[ApplicableDiscount, ...] | list[ApplicableDiscount],
+) -> list[Decimal]:
+    """Spread each discount over the lines it covers, in proportion to their totals.
+
+    Subscription-scoped discounts cover every line; product-scoped ones only the
+    lines of their product. The last covered line takes the rounding remainder.
+    """
+    allocated = [Decimal("0")] * len(line_totals)
+    for discount in discounts:
+        if discount.rule.scope == DiscountScope.PRODUCT:
+            targets = [
+                i
+                for i, line in enumerate(subscription.lines)
+                if line.product_id == discount.rule.product_id
+            ]
+        else:
+            targets = list(range(len(line_totals)))
+        base = sum((line_totals[i] for i in targets), Decimal("0"))
+        if not targets or base <= 0:
+            continue
+        remaining = discount.amount
+        for i in targets[:-1]:
+            share = money(discount.amount * line_totals[i] / base)
+            allocated[i] += share
+            remaining -= share
+        allocated[targets[-1]] += remaining
+    return allocated
+
+
+def build_invoice_draft(
+    subscription: Subscription,
+    today: date,
+    discounts: tuple[ApplicableDiscount, ...] | list[ApplicableDiscount] = (),
+) -> InvoiceDraft:
+    """Build invoice lines and totals without touching the database.
+
+    Tax is calculated on each line's amount after its share of the discounts.
+    """
     period_start = subscription.next_billing_date
     if period_start is None:
         raise BillingError("Subscription has no next billing date")
@@ -121,14 +170,21 @@ def build_invoice_draft(subscription: Subscription, today: date) -> InvoiceDraft
     if not subscription.lines:
         raise BillingError("Subscription has no lines")
 
-    lines: list[DraftLine] = []
-    subtotal = Decimal("0")
-    tax_total = Decimal("0")
     for line in subscription.lines:
         if line.product is None:
             raise BillingError(f"Subscription line {line.id} has no product")
-        line_total = money(line.unit_price * line.quantity)
-        tax_name, tax_rate, tax_amount = _line_tax(line, line_total)
+    line_totals = [money(l.unit_price * l.quantity) for l in subscription.lines]
+    allocated = _allocate_discounts(subscription, line_totals, discounts)
+
+    lines: list[DraftLine] = []
+    subtotal = Decimal("0")
+    tax_total = Decimal("0")
+    for line, line_total, line_discount in zip(
+        subscription.lines, line_totals, allocated
+    ):
+        tax_name, tax_rate, tax_amount = _line_tax(
+            line, line_total - line_discount
+        )
         lines.append(
             DraftLine(
                 description=_line_description(line),
@@ -145,6 +201,10 @@ def build_invoice_draft(subscription: Subscription, today: date) -> InvoiceDraft
 
     subtotal = money(subtotal)
     tax_total = money(tax_total)
+    discount_lines = tuple(
+        DraftDiscountLine(d.rule.id, d.description, d.amount) for d in discounts
+    )
+    discount_total = money(sum((d.amount for d in discount_lines), Decimal("0")))
     return InvoiceDraft(
         period_start=period_start,
         period_end=period_end(period_start, subscription.plan.billing_period),
@@ -152,9 +212,10 @@ def build_invoice_draft(subscription: Subscription, today: date) -> InvoiceDraft
         due_date=today + timedelta(days=subscription.payment_terms_days),
         lines=tuple(lines),
         subtotal=subtotal,
-        discount_total=money(Decimal("0")),
+        discount_total=discount_total,
         tax_total=tax_total,
-        total=money(subtotal + tax_total),
+        total=money(subtotal - discount_total + tax_total),
+        discount_lines=discount_lines,
     )
 
 
@@ -210,7 +271,11 @@ def create_invoice_for_subscription(
     ):
         raise BillingError("Subscription expired before this period")
 
-    draft = build_invoice_draft(subscription, today)
+    subtotal = money(
+        sum((l.unit_price * l.quantity for l in subscription.lines), Decimal("0"))
+    )
+    discounts = find_applicable_discounts(db, subscription, subtotal, today)
+    draft = build_invoice_draft(subscription, today, discounts)
     invoice = Invoice(
         number=next_invoice_number(db),
         subscription_id=subscription.id,
@@ -241,6 +306,19 @@ def create_invoice_for_subscription(
                 tax_rate=line.tax_rate,
                 tax_amount=line.tax_amount,
                 line_total=line.line_total,
+            )
+        )
+    for discount in draft.discount_lines:
+        db.add(
+            InvoiceLine(
+                invoice_id=invoice.id,
+                line_type=InvoiceLineType.DISCOUNT,
+                description=discount.description,
+                quantity=1,
+                unit_price=-discount.amount,
+                tax_amount=money(Decimal("0")),
+                line_total=-discount.amount,
+                discount_rule_id=discount.discount_rule_id,
             )
         )
     db.flush()
