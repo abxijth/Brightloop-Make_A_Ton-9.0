@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.models.discount import DiscountRule
 from app.models.enums import DiscountScope, InvoiceLineType, InvoiceStatus, ValueType
 from app.models.invoice import Invoice, InvoiceLine
-from app.models.subscription import Subscription, SubscriptionLine
+from app.models.subscription import Subscription
 
 CENT = Decimal("0.01")
 
