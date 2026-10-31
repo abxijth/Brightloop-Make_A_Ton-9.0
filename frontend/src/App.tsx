@@ -11,6 +11,8 @@ import { StaffPage } from './pages/StaffPage';
 import { OutboxPage } from './pages/OutboxPage';
 import { SubscriptionsBackOfficePage } from './pages/SubscriptionsBackOfficePage';
 import { InvoicesPage } from './pages/InvoicesPage';
+import { BackOfficeInvoicesPage } from './pages/BackOfficeInvoicesPage';
+import { PaymentsPage } from './pages/PaymentsPage';
 
 function AppRoutes() {
   const [currentRole, setCurrentRole] = useState<UserRole>('admin');
@@ -44,22 +46,8 @@ function AppRoutes() {
       >
         <Route path="/dashboard" element={<DashboardPage role={backOfficeRole} />} />
         <Route path="/sales/subscriptions" element={<SubscriptionsBackOfficePage />} />
-        <Route
-          path="/billing/invoices"
-          element={
-            <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl bg-card">
-              Billing Invoices view coming soon.
-            </div>
-          }
-        />
-        <Route
-          path="/billing/payments"
-          element={
-            <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl bg-card">
-              Payments ledger coming soon.
-            </div>
-          }
-        />
+        <Route path="/billing/invoices" element={<BackOfficeInvoicesPage />} />
+        <Route path="/billing/payments" element={<PaymentsPage />} />
         <Route
           path="/billing/run"
           element={
