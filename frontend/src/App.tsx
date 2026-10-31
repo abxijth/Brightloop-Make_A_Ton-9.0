@@ -9,6 +9,7 @@ import { MySubscriptionsPage } from './pages/MySubscriptionsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { StaffPage } from './pages/StaffPage';
 import { OutboxPage } from './pages/OutboxPage';
+import { BillingRunPage } from './pages/BillingRunPage';
 import { SubscriptionsBackOfficePage } from './pages/SubscriptionsBackOfficePage';
 import { InvoicesPage } from './pages/InvoicesPage';
 import { AccountPage } from './pages/AccountPage';
@@ -51,14 +52,7 @@ function AppRoutes() {
         <Route path="/sales/subscriptions" element={<SubscriptionsBackOfficePage />} />
         <Route path="/billing/invoices" element={<BackOfficeInvoicesPage />} />
         <Route path="/billing/payments" element={<PaymentsPage />} />
-        <Route
-          path="/billing/run"
-          element={
-            <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl bg-card">
-              One-click Billing Run coming soon.
-            </div>
-          }
-        />
+        <Route path="/billing/run" element={<BillingRunPage />} />
         <Route path="/billing/outbox" element={<OutboxPage />} />
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/customers/:id" element={<CustomerDetailPage />} />
