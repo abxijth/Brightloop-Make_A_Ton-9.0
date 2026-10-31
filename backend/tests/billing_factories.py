@@ -11,7 +11,13 @@ from sqlalchemy.orm import Session
 
 from app.models.catalog import Plan, Product
 from app.models.customer import Customer
-from app.models.enums import BillingPeriod, SubscriptionStatus, ValueType
+from app.models.discount import DiscountRule
+from app.models.enums import (
+    BillingPeriod,
+    DiscountScope,
+    SubscriptionStatus,
+    ValueType,
+)
 from app.models.subscription import Subscription, SubscriptionLine
 from app.models.tax import Tax
 from app.services.numbering import next_subscription_number
@@ -56,6 +62,39 @@ def make_product(
     db.add(product)
     db.flush()
     return product
+
+
+def make_discount(
+    db: Session,
+    *,
+    name: str = "Ten percent",
+    type: ValueType = ValueType.PERCENT,
+    value: Decimal = Decimal("10.00"),
+    scope: DiscountScope = DiscountScope.SUBSCRIPTION,
+    product: Product | None = None,
+    start_date: date = date(2020, 1, 1),
+    end_date: date | None = None,
+    usage_limit: int | None = None,
+    min_purchase: Decimal | None = None,
+    min_quantity: int | None = None,
+    is_active: bool = True,
+) -> DiscountRule:
+    rule = DiscountRule(
+        name=name,
+        type=type,
+        value=value,
+        scope=scope,
+        product_id=product.id if product is not None else None,
+        start_date=start_date,
+        end_date=end_date,
+        usage_limit=usage_limit,
+        min_purchase=min_purchase,
+        min_quantity=min_quantity,
+        is_active=is_active,
+    )
+    db.add(rule)
+    db.flush()
+    return rule
 
 
 def make_plan(

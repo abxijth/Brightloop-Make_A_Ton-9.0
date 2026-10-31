@@ -152,3 +152,36 @@ def test_tax_is_calculated_on_the_discounted_amount() -> None:
     assert draft.tax_total == Decimal("15.00")  # 10% of (200 - 50)
     assert draft.total == Decimal("165.00")
     assert [d.amount for d in draft.discount_lines] == [Decimal("50.00")]
+
+
+def test_product_scoped_discount_is_capped_at_its_target_lines() -> None:
+    tax = Tax(name="VAT", type=ValueType.PERCENT, value=Decimal("10.00"))
+    draft = build_invoice_draft(
+        _subscription(tax=tax),
+        TODAY,
+        [_discount("500.00", scope=DiscountScope.PRODUCT)],
+    )
+
+    # The rule asks for 500 but only 200 of product is on the invoice.
+    assert draft.subtotal == Decimal("200.00")
+    assert draft.discount_total == Decimal("200.00")
+    assert draft.tax_total == Decimal("0.00")
+    assert draft.total == Decimal("0.00")
+    assert [d.amount for d in draft.discount_lines] == [Decimal("200.00")]
+
+
+def test_combined_discounts_never_exceed_the_subtotal() -> None:
+    tax = Tax(name="VAT", type=ValueType.PERCENT, value=Decimal("10.00"))
+    draft = build_invoice_draft(
+        _subscription(tax=tax),
+        TODAY,
+        [_discount("150.00"), _discount("150.00")],
+    )
+
+    assert draft.discount_total == Decimal("200.00")
+    assert draft.tax_total == Decimal("0.00")
+    assert draft.total == Decimal("0.00")
+    assert [d.amount for d in draft.discount_lines] == [
+        Decimal("150.00"),
+        Decimal("50.00"),
+    ]

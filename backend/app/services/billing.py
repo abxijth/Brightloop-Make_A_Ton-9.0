@@ -125,13 +125,16 @@ def _allocate_discounts(
     subscription: Subscription,
     line_totals: list[Decimal],
     discounts: tuple[ApplicableDiscount, ...] | list[ApplicableDiscount],
-) -> list[Decimal]:
+) -> tuple[list[Decimal], list[Decimal]]:
     """Spread each discount over the lines it covers, in proportion to their totals.
 
     Subscription-scoped discounts cover every line; product-scoped ones only the
-    lines of their product. The last covered line takes the rounding remainder.
+    lines of their product. A discount is capped at the amount still available on
+    its target lines, so a large fixed discount can never push a line below zero.
+    Returns the per-line allocation and the amount actually applied per discount.
     """
     allocated = [Decimal("0")] * len(line_totals)
+    applied: list[Decimal] = []
     for discount in discounts:
         if discount.rule.scope == DiscountScope.PRODUCT:
             targets = [
@@ -141,16 +144,37 @@ def _allocate_discounts(
             ]
         else:
             targets = list(range(len(line_totals)))
-        base = sum((line_totals[i] for i in targets), Decimal("0"))
-        if not targets or base <= 0:
+
+        capacity = {
+            i: max(line_totals[i] - allocated[i], Decimal("0")) for i in targets
+        }
+        base = sum(capacity.values(), Decimal("0"))
+        amount = min(money(discount.amount), money(base))
+        if not targets or base <= 0 or amount <= 0:
+            applied.append(Decimal("0"))
             continue
-        remaining = discount.amount
-        for i in targets[:-1]:
-            share = money(discount.amount * line_totals[i] / base)
-            allocated[i] += share
+
+        given = dict.fromkeys(targets, Decimal("0"))
+        remaining = amount
+        for i in targets:
+            if remaining <= 0:
+                break
+            share = min(money(amount * capacity[i] / base), capacity[i], remaining)
+            given[i] = share
             remaining -= share
-        allocated[targets[-1]] += remaining
-    return allocated
+        # Clamping at a line's capacity can leave a small remainder; fill it in
+        # order without ever exceeding what that line still has available.
+        for i in targets:
+            if remaining <= 0:
+                break
+            extra = min(remaining, capacity[i] - given[i])
+            given[i] += extra
+            remaining -= extra
+
+        for i, value in given.items():
+            allocated[i] += value
+        applied.append(money(amount - remaining))
+    return allocated, applied
 
 
 def build_invoice_draft(
@@ -173,8 +197,8 @@ def build_invoice_draft(
     for line in subscription.lines:
         if line.product is None:
             raise BillingError(f"Subscription line {line.id} has no product")
-    line_totals = [money(l.unit_price * l.quantity) for l in subscription.lines]
-    allocated = _allocate_discounts(subscription, line_totals, discounts)
+    line_totals = [money(line.unit_price * line.quantity) for line in subscription.lines]
+    allocated, applied = _allocate_discounts(subscription, line_totals, discounts)
 
     lines: list[DraftLine] = []
     subtotal = Decimal("0")
@@ -182,9 +206,8 @@ def build_invoice_draft(
     for line, line_total, line_discount in zip(
         subscription.lines, line_totals, allocated
     ):
-        tax_name, tax_rate, tax_amount = _line_tax(
-            line, line_total - line_discount
-        )
+        taxable = max(line_total - line_discount, Decimal("0"))
+        tax_name, tax_rate, tax_amount = _line_tax(line, taxable)
         lines.append(
             DraftLine(
                 description=_line_description(line),
@@ -202,7 +225,9 @@ def build_invoice_draft(
     subtotal = money(subtotal)
     tax_total = money(tax_total)
     discount_lines = tuple(
-        DraftDiscountLine(d.rule.id, d.description, d.amount) for d in discounts
+        DraftDiscountLine(d.rule.id, d.description, amount)
+        for d, amount in zip(discounts, applied)
+        if amount > 0
     )
     discount_total = money(sum((d.amount for d in discount_lines), Decimal("0")))
     return InvoiceDraft(
@@ -214,7 +239,7 @@ def build_invoice_draft(
         subtotal=subtotal,
         discount_total=discount_total,
         tax_total=tax_total,
-        total=money(subtotal - discount_total + tax_total),
+        total=max(money(subtotal - discount_total + tax_total), Decimal("0.00")),
         discount_lines=discount_lines,
     )
 
@@ -272,7 +297,10 @@ def create_invoice_for_subscription(
         raise BillingError("Subscription expired before this period")
 
     subtotal = money(
-        sum((l.unit_price * l.quantity for l in subscription.lines), Decimal("0"))
+        sum(
+            (line.unit_price * line.quantity for line in subscription.lines),
+            Decimal("0"),
+        )
     )
     discounts = find_applicable_discounts(db, subscription, subtotal, today)
     draft = build_invoice_draft(subscription, today, discounts)
