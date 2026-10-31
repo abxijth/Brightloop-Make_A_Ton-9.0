@@ -27,6 +27,7 @@ async function request<T>(method: string, path: string, params?: Record<string, 
     const err = data?.error;
     throw new ApiError(err?.message ?? res.statusText, res.status, err?.code ?? 'error', err?.fields ?? {});
   }
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
@@ -37,3 +38,5 @@ export const apiGet = <T>(path: string, params?: Record<string, string | number 
 export const apiPost = <T>(path: string, body?: unknown) => request<T>('POST', path, undefined, body ?? {});
 
 export const apiPatch = <T>(path: string, body: unknown) => request<T>('PATCH', path, undefined, body);
+
+export const apiDelete = (path: string) => request<void>('DELETE', path);

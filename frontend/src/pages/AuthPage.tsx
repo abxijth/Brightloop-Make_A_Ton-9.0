@@ -12,6 +12,9 @@ import {
   Sparkles,
   RefreshCw,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ApiError, apiPost } from '../lib/api';
+import { useAuth, homePathFor } from '../context/AuthContext';
 import { ThemeToggle } from '../components/shared/ThemeToggle';
 import { cn } from '../lib/utils';
 
@@ -32,6 +35,8 @@ const PASSWORD_RULES: PasswordRule[] = [
 
 export const AuthPage: React.FC = () => {
   const [mode, setMode] = useState<AuthMode>('login');
+  const { login, signup } = useAuth();
+  const navigate = useNavigate();
 
   // Form states
   const [email, setEmail] = useState('');
@@ -67,7 +72,7 @@ export const AuthPage: React.FC = () => {
     setEmailError(validateEmailFormat(email));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
     setSuccessMessage(null);
@@ -96,22 +101,28 @@ export const AuthPage: React.FC = () => {
 
     setIsLoading(true);
 
-    // Mock response simulating backend communication
-    setTimeout(() => {
-      setIsLoading(false);
+    try {
       if (mode === 'forgot-password') {
-        setSuccessMessage('If that email is registered, a password reset link has been dispatched to your outbox.');
+        const res = await apiPost<{ message: string }>('/auth/forgot-password', { email });
+        setSuccessMessage(res.message);
       } else if (mode === 'signup') {
-        // Mock duplicate email test
-        if (email.toLowerCase().includes('duplicate') || email.toLowerCase().includes('exists')) {
-          setEmailError('An account with this email already exists.');
-          return;
-        }
-        setSuccessMessage('Account created successfully! Redirecting to plans...');
+        const u = await signup(email, password, confirmPassword);
+        navigate(homePathFor(u.role), { replace: true });
       } else {
-        setSuccessMessage('Login successful! Redirecting...');
+        const u = await login(email, password);
+        navigate(homePathFor(u.role), { replace: true });
       }
-    }, 700);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.fields.email) setEmailError(err.fields.email);
+        const other = Object.entries(err.fields).filter(([k]) => k !== 'email').map(([, v]) => v);
+        if (!err.fields.email || other.length) setFormError(other.length ? other.join(' ') : err.message);
+      } else {
+        setFormError('Could not reach the server. Please try again.');
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const switchMode = (newMode: AuthMode) => {

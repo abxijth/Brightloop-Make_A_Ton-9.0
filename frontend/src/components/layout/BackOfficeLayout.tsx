@@ -25,10 +25,10 @@ export type UserRole = 'admin' | 'staff' | 'customer';
 
 interface BackOfficeLayoutProps {
   role: 'admin' | 'staff';
-  onSwitchRole?: (role: UserRole) => void;
+  onLogout?: () => void;
 }
 
-export const BackOfficeLayout: React.FC<BackOfficeLayoutProps> = ({ role, onSwitchRole }) => {
+export const BackOfficeLayout: React.FC<BackOfficeLayoutProps> = ({ role, onLogout }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const navigation = [
@@ -150,27 +150,6 @@ export const BackOfficeLayout: React.FC<BackOfficeLayoutProps> = ({ role, onSwit
 
         {/* Role Switcher Demo Bar & User Info */}
         <div className="p-3 border-t border-border bg-muted/20 space-y-2">
-          {onSwitchRole && (
-            <div className="text-[11px] text-muted-foreground space-y-1">
-              <span className="block font-medium">Demo Role Switcher:</span>
-              <div className="flex gap-1">
-                {(['admin', 'staff', 'customer'] as UserRole[]).map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => onSwitchRole(r)}
-                    className={cn(
-                      'px-2 py-0.5 rounded text-[10px] font-semibold border transition-all capitalize',
-                      r === role
-                        ? 'bg-primary text-primary-foreground border-primary'
-                        : 'bg-card border-border hover:bg-muted text-muted-foreground'
-                    )}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
           <div className="flex items-center justify-between pt-2">
             <div className="text-xs">
               <p className="font-medium text-foreground">Logged in as</p>
@@ -206,10 +185,10 @@ export const BackOfficeLayout: React.FC<BackOfficeLayoutProps> = ({ role, onSwit
           <div className="flex items-center gap-3">
             <ThemeToggle />
             <button
-              onClick={() => onSwitchRole?.('customer')}
+              onClick={onLogout}
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
             >
-              <LogOut className="w-3.5 h-3.5" /> Portal
+              <LogOut className="w-3.5 h-3.5" /> Sign out
             </button>
           </div>
         </header>

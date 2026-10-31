@@ -10,7 +10,7 @@ export interface Product {
   name: string;
   type: string;
   salesPrice: number;
-  costPrice: number;
+  costPrice?: number;
   defaultTaxId?: string;
   defaultTaxRate?: number;
   notes?: string;

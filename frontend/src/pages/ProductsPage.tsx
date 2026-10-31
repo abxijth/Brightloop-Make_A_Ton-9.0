@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, Search, Edit2, Trash2, Tag, Layers } from 'lucide-react';
 import { DataTable, Column } from '../components/shared/DataTable';
@@ -6,8 +6,9 @@ import { Drawer } from '../components/shared/Drawer';
 import { FormField } from '../components/shared/FormField';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { useToast } from '../components/shared/Toast';
-import { Product, ProductVariant } from '../types/catalog';
-import { INITIAL_PRODUCTS, INITIAL_TAXES } from '../lib/mockCatalog';
+import { Product, ProductVariant, Tax } from '../types/catalog';
+import { ApiError } from '../lib/api';
+import { productsApi, taxesApi, camelFields } from '../lib/catalogApi';
 
 const PAGE_SIZE = 10;
 const inputClass = 'w-full px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary';
@@ -17,9 +18,7 @@ interface ProductFormData {
   name: string;
   type: string;
   salesPrice: number;
-  costPrice: number;
   defaultTaxId: string;
-  notes: string;
   isActive: boolean;
   variants: ProductVariant[];
 }
@@ -28,9 +27,7 @@ const EMPTY_FORM: ProductFormData = {
   name: '',
   type: 'Software',
   salesPrice: 0,
-  costPrice: 0,
-  defaultTaxId: 'tax-1',
-  notes: '',
+  defaultTaxId: '',
   isActive: true,
   variants: [],
 };
@@ -38,7 +35,20 @@ const EMPTY_FORM: ProductFormData = {
 export function ProductsPage() {
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [taxes, setTaxes] = useState<Tax[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const reload = useCallback(() => {
+    Promise.all([productsApi.list(), taxesApi.list()])
+      .then(([p, t]) => {
+        setProducts(p);
+        setTaxes(t);
+      })
+      .catch((e) => toast({ type: 'error', title: e.message }))
+      .finally(() => setLoading(false));
+  }, [toast]);
+  useEffect(reload, [reload]);
   const [searchTerm, setSearchTerm] = useState(searchParams.get('q') || '');
   const [typeFilter, setTypeFilter] = useState<string>('all');
 
@@ -56,8 +66,7 @@ export function ProductsPage() {
     return products.filter((p) => {
       const matchSearch =
         p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.type.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.notes?.toLowerCase().includes(searchTerm.toLowerCase());
+        p.type.toLowerCase().includes(searchTerm.toLowerCase());
       const matchType = typeFilter === 'all' || p.type === typeFilter;
       return matchSearch && matchType;
     });
@@ -81,9 +90,7 @@ export function ProductsPage() {
       name: p.name,
       type: p.type,
       salesPrice: p.salesPrice,
-      costPrice: p.costPrice,
       defaultTaxId: p.defaultTaxId || '',
-      notes: p.notes || '',
       isActive: p.isActive,
       variants: [...p.variants],
     });
@@ -120,64 +127,53 @@ export function ProductsPage() {
     }));
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const fail = (e: unknown, fallback: string) => {
+    if (e instanceof ApiError) {
+      setFieldErrors(camelFields(e.fields));
+      toast({ type: 'error', title: e.message });
+    } else {
+      toast({ type: 'error', title: fallback });
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const errors: Record<string, string> = {};
     if (!formData.name.trim()) errors.name = 'Product name is required';
     if (formData.salesPrice < 0) errors.salesPrice = 'Sales price cannot be negative';
-    if (formData.costPrice < 0) errors.costPrice = 'Cost price cannot be negative';
 
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
     }
 
-    const taxObj = INITIAL_TAXES.find((t) => t.id === formData.defaultTaxId);
-
-    if (formData.id) {
-      setProducts((prev) =>
-        prev.map((item) =>
-          item.id === formData.id
-            ? {
-                ...item,
-                name: formData.name.trim(),
-                type: formData.type,
-                salesPrice: Number(formData.salesPrice),
-                costPrice: Number(formData.costPrice),
-                defaultTaxId: formData.defaultTaxId,
-                defaultTaxRate: taxObj ? taxObj.value : 0,
-                notes: formData.notes.trim(),
-                isActive: formData.isActive,
-                variants: formData.variants,
-              }
-            : item
-        )
-      );
-      toast({ type: 'success', title: 'Product updated successfully' });
-    } else {
-      const newProduct: Product = {
-        id: `prod-${Date.now()}`,
+    try {
+      await productsApi.save({
+        id: formData.id,
         name: formData.name.trim(),
         type: formData.type,
         salesPrice: Number(formData.salesPrice),
-        costPrice: Number(formData.costPrice),
-        defaultTaxId: formData.defaultTaxId,
-        defaultTaxRate: taxObj ? taxObj.value : 0,
-        notes: formData.notes.trim(),
+        defaultTaxId: formData.defaultTaxId || undefined,
         isActive: formData.isActive,
         variants: formData.variants,
-        createdAt: new Date().toISOString().split('T')[0],
-      };
-      setProducts((prev) => [newProduct, ...prev]);
-      toast({ type: 'success', title: 'Product added to catalog' });
+      });
+      toast({ type: 'success', title: formData.id ? 'Product updated successfully' : 'Product added to catalog' });
+      setDrawerOpen(false);
+      reload();
+    } catch (err) {
+      fail(err, 'Could not save product');
     }
-    setDrawerOpen(false);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
-    setProducts((prev) => prev.filter((p) => p.id !== deleteTarget.id));
-    toast({ type: 'success', title: `Product "${deleteTarget.name}" deleted` });
+    try {
+      await productsApi.remove(deleteTarget.id);
+      toast({ type: 'success', title: `Product "${deleteTarget.name}" deleted` });
+      reload();
+    } catch (e) {
+      fail(e, 'Could not delete product');
+    }
     setDeleteTarget(null);
   };
 
@@ -196,7 +192,6 @@ export function ProductsPage() {
               </span>
             )}
           </div>
-          {p.notes && <div className="text-xs text-muted-foreground line-clamp-1">{p.notes}</div>}
         </div>
       ),
     },
@@ -218,12 +213,6 @@ export function ProductsPage() {
       render: (p) => <span className="font-semibold text-foreground">${p.salesPrice.toFixed(2)}</span>,
     },
     {
-      key: 'costPrice',
-      header: 'Cost Price',
-      sortable: true,
-      render: (p) => <span className="text-muted-foreground">${p.costPrice.toFixed(2)}</span>,
-    },
-    {
       key: 'variants',
       header: 'Variants',
       render: (p) => (
@@ -243,7 +232,7 @@ export function ProductsPage() {
       key: 'tax',
       header: 'Default Tax',
       render: (p) => {
-        const tax = INITIAL_TAXES.find((t) => t.id === p.defaultTaxId);
+        const tax = taxes.find((t) => t.id === p.defaultTaxId);
         return (
           <span className="text-xs text-muted-foreground">
             {tax ? `${tax.name} (${tax.type === 'percent' ? `${tax.value}%` : `$${tax.value}`})` : 'None'}
@@ -299,7 +288,7 @@ export function ProductsPage() {
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search products by name, type or notes..."
+            placeholder="Search products by name or type..."
             value={searchTerm}
             onChange={(e) => {
               setSearchTerm(e.target.value);
@@ -328,6 +317,7 @@ export function ProductsPage() {
         <DataTable
           columns={columns}
           data={filteredProducts}
+          isLoading={loading}
           totalCount={filteredProducts.length}
           pageSize={PAGE_SIZE}
           emptyMessage="No products match your criteria."
@@ -373,7 +363,7 @@ export function ProductsPage() {
                 className={inputClass}
               >
                 <option value="">No Tax</option>
-                {INITIAL_TAXES.map((tax) => (
+                {taxes.map((tax) => (
                   <option key={tax.id} value={tax.id}>
                     {tax.name} ({tax.type === 'percent' ? `${tax.value}%` : `$${tax.value}`})
                   </option>
@@ -382,7 +372,7 @@ export function ProductsPage() {
             </FormField>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             <FormField label="Base Sales Price ($)" error={fieldErrors.salesPrice} required>
               <input
                 type="number"
@@ -394,27 +384,7 @@ export function ProductsPage() {
               />
             </FormField>
 
-            <FormField label="Cost Price ($)" error={fieldErrors.costPrice}>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={formData.costPrice}
-                onChange={(e) => setFormData({ ...formData, costPrice: parseFloat(e.target.value) || 0 })}
-                className={inputClass}
-              />
-            </FormField>
           </div>
-
-          <FormField label="Internal Notes / Description">
-            <textarea
-              rows={2}
-              placeholder="Key technical attributes or fulfillment notes..."
-              value={formData.notes}
-              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-              className={inputClass}
-            />
-          </FormField>
 
           {/* Variants Sub-table with live Final Price calculation */}
           <div className="border border-border rounded-lg p-4 bg-muted/20 space-y-3">

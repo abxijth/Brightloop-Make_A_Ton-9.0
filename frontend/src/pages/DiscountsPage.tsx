@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, Search, Edit2, Trash2, Calendar, Percent, DollarSign } from 'lucide-react';
 import { DataTable, Column } from '../components/shared/DataTable';
@@ -6,8 +6,9 @@ import { Drawer } from '../components/shared/Drawer';
 import { FormField } from '../components/shared/FormField';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { useToast } from '../components/shared/Toast';
-import { DiscountRule } from '../types/catalog';
-import { INITIAL_DISCOUNTS, INITIAL_PRODUCTS } from '../lib/mockCatalog';
+import { DiscountRule, Product } from '../types/catalog';
+import { ApiError } from '../lib/api';
+import { discountsApi, productsApi, camelFields } from '../lib/catalogApi';
 
 const PAGE_SIZE = 10;
 const inputClass = 'w-full px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary';
@@ -36,13 +37,26 @@ const EMPTY_FORM: DiscountFormData = {
   endDate: '',
   usageLimit: '',
   scope: 'subscription',
-  productId: INITIAL_PRODUCTS[0]?.id || '',
+  productId: '',
 };
 
 export function DiscountsPage() {
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [discounts, setDiscounts] = useState<DiscountRule[]>(INITIAL_DISCOUNTS);
+  const [discounts, setDiscounts] = useState<DiscountRule[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const reload = useCallback(() => {
+    Promise.all([discountsApi.list(), productsApi.list()])
+      .then(([d, p]) => {
+        setDiscounts(d);
+        setProducts(p);
+      })
+      .catch((e) => toast({ type: 'error', title: e.message }))
+      .finally(() => setLoading(false));
+  }, [toast]);
+  useEffect(reload, [reload]);
   const [searchTerm, setSearchTerm] = useState(searchParams.get('q') || '');
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
@@ -86,13 +100,22 @@ export function DiscountsPage() {
       endDate: rule.endDate || '',
       usageLimit: rule.usageLimit ? String(rule.usageLimit) : '',
       scope: rule.scope,
-      productId: rule.productId || INITIAL_PRODUCTS[0]?.id || '',
+      productId: rule.productId || products[0]?.id || '',
     });
     setFieldErrors({});
     setDrawerOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const fail = (e: unknown, fallback: string) => {
+    if (e instanceof ApiError) {
+      setFieldErrors(camelFields(e.fields));
+      toast({ type: 'error', title: e.message });
+    } else {
+      toast({ type: 'error', title: fallback });
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const errors: Record<string, string> = {};
     if (!formData.name.trim()) errors.name = 'Discount rule name is required';
@@ -109,35 +132,10 @@ export function DiscountsPage() {
       return;
     }
 
-    const selectedProduct = formData.scope === 'product'
-      ? INITIAL_PRODUCTS.find((p) => p.id === formData.productId)
-      : undefined;
-
-    if (formData.id) {
-      setDiscounts((prev) =>
-        prev.map((item) =>
-          item.id === formData.id
-            ? {
-                ...item,
-                name: formData.name.trim(),
-                type: formData.type,
-                value: Number(formData.value),
-                minPurchase: formData.minPurchase ? Number(formData.minPurchase) : undefined,
-                minQuantity: formData.minQuantity ? parseInt(formData.minQuantity, 10) : undefined,
-                startDate: formData.startDate,
-                endDate: formData.endDate || undefined,
-                usageLimit: formData.usageLimit ? parseInt(formData.usageLimit, 10) : undefined,
-                scope: formData.scope,
-                productId: formData.scope === 'product' ? formData.productId : undefined,
-                productName: selectedProduct?.name,
-              }
-            : item
-        )
-      );
-      toast({ type: 'success', title: 'Discount rule updated' });
-    } else {
-      const newDiscount: DiscountRule = {
-        id: `disc-${Date.now()}`,
+    try {
+      const existing = discounts.find((d) => d.id === formData.id);
+      await discountsApi.save({
+        id: formData.id,
         name: formData.name.trim(),
         type: formData.type,
         value: Number(formData.value),
@@ -146,23 +144,27 @@ export function DiscountsPage() {
         startDate: formData.startDate,
         endDate: formData.endDate || undefined,
         usageLimit: formData.usageLimit ? parseInt(formData.usageLimit, 10) : undefined,
-        timesUsed: 0,
         scope: formData.scope,
         productId: formData.scope === 'product' ? formData.productId : undefined,
-        productName: selectedProduct?.name,
-        isActive: true,
-        createdAt: todayStr,
-      };
-      setDiscounts((prev) => [newDiscount, ...prev]);
-      toast({ type: 'success', title: 'New discount rule established' });
+        isActive: existing ? existing.isActive : true,
+      });
+      toast({ type: 'success', title: formData.id ? 'Discount rule updated' : 'New discount rule established' });
+      setDrawerOpen(false);
+      reload();
+    } catch (err) {
+      fail(err, 'Could not save discount rule');
     }
-    setDrawerOpen(false);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
-    setDiscounts((prev) => prev.filter((d) => d.id !== deleteTarget.id));
-    toast({ type: 'success', title: `Discount rule "${deleteTarget.name}" deleted` });
+    try {
+      await discountsApi.remove(deleteTarget.id);
+      toast({ type: 'success', title: `Discount rule "${deleteTarget.name}" deleted` });
+      reload();
+    } catch (e) {
+      fail(e, 'Could not delete discount rule');
+    }
     setDeleteTarget(null);
   };
 
@@ -338,6 +340,7 @@ export function DiscountsPage() {
         <DataTable
           columns={columns}
           data={filteredDiscounts}
+          isLoading={loading}
           totalCount={filteredDiscounts.length}
           pageSize={PAGE_SIZE}
           emptyMessage="No discount rules match your criteria."
@@ -410,7 +413,7 @@ export function DiscountsPage() {
                   onChange={(e) => setFormData({ ...formData, productId: e.target.value })}
                   className={inputClass}
                 >
-                  {INITIAL_PRODUCTS.map((prod) => (
+                  {products.map((prod) => (
                     <option key={prod.id} value={prod.id}>
                       {prod.name}
                     </option>

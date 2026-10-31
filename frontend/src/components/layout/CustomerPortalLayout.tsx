@@ -3,13 +3,12 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { Repeat, FileText, User } from 'lucide-react';
 import { ThemeToggle } from '../shared/ThemeToggle';
 import { cn } from '../../lib/utils';
-import type { UserRole } from './BackOfficeLayout';
 
 interface CustomerPortalLayoutProps {
-  onSwitchRole?: (role: UserRole) => void;
+  onLogout?: () => void;
 }
 
-export const CustomerPortalLayout: React.FC<CustomerPortalLayoutProps> = ({ onSwitchRole }) => {
+export const CustomerPortalLayout: React.FC<CustomerPortalLayoutProps> = ({ onLogout }) => {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Top Navigation */}
@@ -70,12 +69,12 @@ export const CustomerPortalLayout: React.FC<CustomerPortalLayoutProps> = ({ onSw
           </div>
 
           <div className="flex items-center gap-3">
-            {onSwitchRole && (
+            {onLogout && (
               <button
-                onClick={() => onSwitchRole('admin')}
+                onClick={onLogout}
                 className="text-xs text-muted-foreground hover:text-foreground border border-border px-2.5 py-1 rounded-md"
               >
-                Back-office
+                Sign out
               </button>
             )}
             <ThemeToggle />

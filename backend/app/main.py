@@ -5,6 +5,7 @@ from app.config import settings
 from app.errors import register_error_handlers
 from app.routers import (
     auth,
+    catalog,
     customers,
     invoices,
     operations,
@@ -25,6 +26,8 @@ app.add_middleware(
 
 register_error_handlers(app)
 app.include_router(auth.router)
+for _r in (catalog.taxes, catalog.products, catalog.plans, catalog.discounts):
+    app.include_router(_r)
 app.include_router(customers.router)
 app.include_router(invoices.router)
 app.include_router(operations.router)

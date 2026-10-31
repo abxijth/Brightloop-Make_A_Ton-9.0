@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Plus, Search, Edit2, Trash2, Percent, DollarSign, CheckCircle2, XCircle } from 'lucide-react';
 import { DataTable, Column } from '../components/shared/DataTable';
 import { Drawer } from '../components/shared/Drawer';
@@ -6,7 +6,8 @@ import { FormField } from '../components/shared/FormField';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { useToast } from '../components/shared/Toast';
 import { Tax } from '../types/catalog';
-import { INITIAL_TAXES } from '../lib/mockCatalog';
+import { ApiError } from '../lib/api';
+import { taxesApi, camelFields } from '../lib/catalogApi';
 
 const PAGE_SIZE = 10;
 const inputClass = 'w-full px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary';
@@ -28,7 +29,22 @@ const EMPTY_FORM: TaxFormData = {
 
 export function TaxesPage() {
   const { toast } = useToast();
-  const [taxes, setTaxes] = useState<Tax[]>(INITIAL_TAXES);
+  const [taxes, setTaxes] = useState<Tax[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const reload = useCallback(() => {
+    taxesApi.list().then(setTaxes).catch((e) => toast({ type: 'error', title: e.message })).finally(() => setLoading(false));
+  }, [toast]);
+  useEffect(reload, [reload]);
+
+  const fail = (e: unknown, fallback: string) => {
+    if (e instanceof ApiError) {
+      setFieldErrors(camelFields(e.fields));
+      toast({ type: 'error', title: e.message });
+    } else {
+      toast({ type: 'error', title: fallback });
+    }
+  };
   const [searchTerm, setSearchTerm] = useState('');
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -58,14 +74,19 @@ export function TaxesPage() {
     setDrawerOpen(true);
   };
 
-  const handleToggleActive = (taxId: string) => {
-    setTaxes((prev) =>
-      prev.map((t) => (t.id === taxId ? { ...t, isActive: !t.isActive } : t))
-    );
-    toast({ type: 'success', title: 'Tax status updated' });
+  const handleToggleActive = async (taxId: string) => {
+    const t = taxes.find((x) => x.id === taxId);
+    if (!t) return;
+    try {
+      await taxesApi.save({ ...t, isActive: !t.isActive });
+      reload();
+      toast({ type: 'success', title: 'Tax status updated' });
+    } catch (e) {
+      fail(e, 'Could not update tax');
+    }
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const errors: Record<string, string> = {};
     if (!formData.name.trim()) errors.name = 'Tax name is required';
@@ -79,40 +100,31 @@ export function TaxesPage() {
       return;
     }
 
-    if (formData.id) {
-      setTaxes((prev) =>
-        prev.map((item) =>
-          item.id === formData.id
-            ? {
-                ...item,
-                name: formData.name.trim(),
-                type: formData.type,
-                value: Number(formData.value),
-                isActive: formData.isActive,
-              }
-            : item
-        )
-      );
-      toast({ type: 'success', title: 'Tax updated successfully' });
-    } else {
-      const newTax: Tax = {
-        id: `tax-${Date.now()}`,
+    try {
+      await taxesApi.save({
+        id: formData.id,
         name: formData.name.trim(),
         type: formData.type,
         value: Number(formData.value),
         isActive: formData.isActive,
-        createdAt: new Date().toISOString().split('T')[0],
-      };
-      setTaxes((prev) => [newTax, ...prev]);
-      toast({ type: 'success', title: 'New tax rule registered' });
+      });
+      toast({ type: 'success', title: formData.id ? 'Tax updated successfully' : 'New tax rule registered' });
+      setDrawerOpen(false);
+      reload();
+    } catch (err) {
+      fail(err, 'Could not save tax');
     }
-    setDrawerOpen(false);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
-    setTaxes((prev) => prev.filter((t) => t.id !== deleteTarget.id));
-    toast({ type: 'success', title: `Tax "${deleteTarget.name}" deleted` });
+    try {
+      await taxesApi.remove(deleteTarget.id);
+      toast({ type: 'success', title: `Tax "${deleteTarget.name}" deleted` });
+      reload();
+    } catch (e) {
+      fail(e, 'Could not delete tax');
+    }
     setDeleteTarget(null);
   };
 
@@ -223,6 +235,7 @@ export function TaxesPage() {
           data={filteredTaxes}
           totalCount={filteredTaxes.length}
           pageSize={PAGE_SIZE}
+          isLoading={loading}
           emptyMessage="No taxes match your search."
         />
       </div>

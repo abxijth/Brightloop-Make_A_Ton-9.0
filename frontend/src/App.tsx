@@ -1,10 +1,12 @@
-import { useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom';
+import { AuthProvider, useAuth, homePathFor } from './context/AuthContext';
+import type { Role } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { ToastProvider } from './components/shared/Toast';
 import { AuthPage } from './pages/AuthPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { CustomerPortalLayout } from './components/layout/CustomerPortalLayout';
-import { BackOfficeLayout, UserRole } from './components/layout/BackOfficeLayout';
+import { BackOfficeLayout } from './components/layout/BackOfficeLayout';
 import { MySubscriptionsPage } from './pages/MySubscriptionsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { StaffPage } from './pages/StaffPage';
@@ -22,33 +24,39 @@ import { PlansPage } from './pages/PlansPage';
 import { TaxesPage } from './pages/TaxesPage';
 import { DiscountsPage } from './pages/DiscountsPage';
 
+function RequireRole({ allow }: { allow: Role[] }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="p-8 text-sm text-muted-foreground">Loading...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!allow.includes(user.role)) return <Navigate to={homePathFor(user.role)} replace />;
+  return <Outlet />;
+}
+
 function AppRoutes() {
-  const [currentRole, setCurrentRole] = useState<UserRole>('admin');
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  const handleSwitchRole = (role: UserRole) => {
-    setCurrentRole(role);
-    if (role === 'customer') {
-      navigate('/portal/subscriptions');
-    } else {
-      navigate('/dashboard');
-    }
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login', { replace: true });
   };
 
-  const backOfficeRole = currentRole === 'customer' ? 'admin' : currentRole;
+  const backOfficeRole: 'admin' | 'staff' = user?.role === 'staff' ? 'staff' : 'admin';
 
   return (
     <Routes>
       {/* Auth routes */}
       <Route path="/auth" element={<AuthPage />} />
       <Route path="/login" element={<AuthPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
 
       {/* Back-office shell (Admin & Staff) */}
+      <Route element={<RequireRole allow={['admin', 'staff']} />}>
       <Route
         element={
           <BackOfficeLayout
             role={backOfficeRole}
-            onSwitchRole={handleSwitchRole}
+            onLogout={handleLogout}
           />
         }
       >
@@ -64,28 +72,30 @@ function AppRoutes() {
         <Route path="/catalog/plans" element={<PlansPage />} />
         <Route path="/config/taxes" element={<TaxesPage />} />
         <Route path="/config/discounts" element={<DiscountsPage />} />
-        <Route path="/config/staff" element={<StaffPage />} />
+        <Route element={<RequireRole allow={['admin']} />}>
+          <Route path="/config/staff" element={<StaffPage />} />
+        </Route>
+      </Route>
       </Route>
 
       {/* Customer Portal shell (Customer) */}
+      <Route element={<RequireRole allow={['customer']} />}>
       <Route
         path="/portal"
-        element={<CustomerPortalLayout onSwitchRole={handleSwitchRole} />}
+        element={<CustomerPortalLayout onLogout={handleLogout} />}
       >
         <Route index element={<Navigate to="/portal/subscriptions" replace />} />
         <Route path="subscriptions" element={<MySubscriptionsPage />} />
         <Route path="invoices" element={<InvoicesPage />} />
         <Route path="account" element={<AccountPage />} />
       </Route>
+      </Route>
 
       {/* Default redirect: back-office dashboard */}
       <Route
         path="*"
         element={
-          <Navigate
-            to={currentRole === 'customer' ? '/portal/subscriptions' : '/dashboard'}
-            replace
-          />
+          <Navigate to={user ? homePathFor(user.role) : '/login'} replace />
         }
       />
     </Routes>
@@ -97,7 +107,9 @@ export function App() {
     <ThemeProvider>
       <ToastProvider>
         <BrowserRouter>
-          <AppRoutes />
+          <AuthProvider>
+            <AppRoutes />
+          </AuthProvider>
         </BrowserRouter>
       </ToastProvider>
     </ThemeProvider>

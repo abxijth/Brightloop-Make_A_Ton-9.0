@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, Search, Edit2, Trash2, Calendar, Repeat } from 'lucide-react';
 import { DataTable, Column } from '../components/shared/DataTable';
@@ -7,7 +7,8 @@ import { FormField } from '../components/shared/FormField';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { useToast } from '../components/shared/Toast';
 import { Plan } from '../types/catalog';
-import { INITIAL_PLANS } from '../lib/mockCatalog';
+import { ApiError } from '../lib/api';
+import { plansApi, camelFields } from '../lib/catalogApi';
 
 const PAGE_SIZE = 10;
 const inputClass = 'w-full px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary';
@@ -40,7 +41,13 @@ const EMPTY_FORM: PlanFormData = {
 export function PlansPage() {
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [plans, setPlans] = useState<Plan[]>(INITIAL_PLANS);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const reload = useCallback(() => {
+    plansApi.list().then(setPlans).catch((e) => toast({ type: 'error', title: e.message })).finally(() => setLoading(false));
+  }, [toast]);
+  useEffect(reload, [reload]);
   const [searchTerm, setSearchTerm] = useState(searchParams.get('q') || '');
   const [periodFilter, setPeriodFilter] = useState<string>('all');
 
@@ -80,12 +87,22 @@ export function PlansPage() {
     setDrawerOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const fail = (e: unknown, fallback: string) => {
+    if (e instanceof ApiError) {
+      setFieldErrors(camelFields(e.fields));
+      toast({ type: 'error', title: e.message });
+    } else {
+      toast({ type: 'error', title: fallback });
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const errors: Record<string, string> = {};
     if (!formData.name.trim()) errors.name = 'Plan name is required';
     if (formData.price < 0) errors.price = 'Price cannot be negative';
     if (formData.minQuantity < 1) errors.minQuantity = 'Min quantity must be at least 1';
+    if (!formData.availableFrom) errors.availableFrom = 'Available from is required';
     if (formData.availableTo && formData.availableFrom && formData.availableTo < formData.availableFrom) {
       errors.availableTo = 'End date cannot precede start date';
     }
@@ -95,50 +112,36 @@ export function PlansPage() {
       return;
     }
 
-    if (formData.id) {
-      setPlans((prev) =>
-        prev.map((item) =>
-          item.id === formData.id
-            ? {
-                ...item,
-                name: formData.name.trim(),
-                price: Number(formData.price),
-                billingPeriod: formData.billingPeriod,
-                minQuantity: Number(formData.minQuantity),
-                availableFrom: formData.availableFrom || undefined,
-                availableTo: formData.availableTo || undefined,
-                autoClose: formData.autoClose,
-                allowEarlyClose: formData.allowEarlyClose,
-                isActive: formData.isActive,
-              }
-            : item
-        )
-      );
-      toast({ type: 'success', title: 'Plan updated successfully' });
-    } else {
-      const newPlan: Plan = {
-        id: `plan-${Date.now()}`,
+    try {
+      await plansApi.save({
+        id: formData.id,
         name: formData.name.trim(),
         price: Number(formData.price),
         billingPeriod: formData.billingPeriod,
         minQuantity: Number(formData.minQuantity),
-        availableFrom: formData.availableFrom || undefined,
+        availableFrom: formData.availableFrom,
         availableTo: formData.availableTo || undefined,
         autoClose: formData.autoClose,
         allowEarlyClose: formData.allowEarlyClose,
         isActive: formData.isActive,
-        createdAt: new Date().toISOString().split('T')[0],
-      };
-      setPlans((prev) => [newPlan, ...prev]);
-      toast({ type: 'success', title: 'New plan published' });
+      });
+      toast({ type: 'success', title: formData.id ? 'Plan updated successfully' : 'New plan published' });
+      setDrawerOpen(false);
+      reload();
+    } catch (err) {
+      fail(err, 'Could not save plan');
     }
-    setDrawerOpen(false);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
-    setPlans((prev) => prev.filter((p) => p.id !== deleteTarget.id));
-    toast({ type: 'success', title: `Plan "${deleteTarget.name}" deleted` });
+    try {
+      await plansApi.remove(deleteTarget.id);
+      toast({ type: 'success', title: `Plan "${deleteTarget.name}" deleted` });
+      reload();
+    } catch (e) {
+      fail(e, 'Could not delete plan');
+    }
     setDeleteTarget(null);
   };
 
@@ -287,6 +290,7 @@ export function PlansPage() {
         <DataTable
           columns={columns}
           data={filteredPlans}
+          isLoading={loading}
           totalCount={filteredPlans.length}
           pageSize={PAGE_SIZE}
           emptyMessage="No plans match your filter."
