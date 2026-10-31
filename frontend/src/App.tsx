@@ -9,6 +9,7 @@ import { MySubscriptionsPage } from './pages/MySubscriptionsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { OutboxPage } from './pages/OutboxPage';
 import { SubscriptionsBackOfficePage } from './pages/SubscriptionsBackOfficePage';
+import { InvoicesPage } from './pages/InvoicesPage';
 
 function AppRoutes() {
   const [currentRole, setCurrentRole] = useState<UserRole>('admin');
@@ -124,14 +125,7 @@ function AppRoutes() {
       >
         <Route index element={<Navigate to="/portal/subscriptions" replace />} />
         <Route path="subscriptions" element={<MySubscriptionsPage />} />
-        <Route
-          path="invoices"
-          element={
-            <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl bg-card">
-              Invoices view coming soon.
-            </div>
-          }
-        />
+        <Route path="invoices" element={<InvoicesPage />} />
         <Route
           path="account"
           element={

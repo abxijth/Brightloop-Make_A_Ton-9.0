@@ -97,10 +97,14 @@
     background: white !important;
     color: black !important;
   }
-  .no-print {
+  header, nav, aside, button, .no-print, [role="dialog"], .fixed {
     display: none !important;
   }
-  .print-only {
+  #printable-invoice {
     display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
   }
 }
