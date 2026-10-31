@@ -18,6 +18,7 @@ from app.models.enums import (
     SubscriptionStatus,
     ValueType,
 )
+from app.models.quotation import QuotationTemplate, QuotationTemplateLine
 from app.models.subscription import Subscription, SubscriptionLine
 from app.models.tax import Tax
 from app.services.numbering import next_subscription_number
@@ -124,13 +125,41 @@ def make_plan(
     return plan
 
 
+def make_template(
+    db: Session,
+    *,
+    plan: Plan,
+    lines: list[tuple[Product, int]],
+    name: str = "Starter",
+    validity_days: int = 30,
+) -> QuotationTemplate:
+    template = QuotationTemplate(
+        name=name,
+        plan=plan,
+        validity_days=validity_days,
+    )
+    db.add(template)
+    db.flush()
+
+    for product, quantity in lines:
+        db.add(
+            QuotationTemplateLine(
+                template_id=template.id,
+                product_id=product.id,
+                quantity=quantity,
+            )
+        )
+    db.flush()
+    return template
+
+
 def make_subscription(
     db: Session,
     *,
     customer: Customer,
     plan: Plan,
     lines: list[tuple[Product, int, Decimal]],
-    next_billing_date: date,
+    next_billing_date: date | None = None,
     status: SubscriptionStatus = SubscriptionStatus.ACTIVE,
     start_date: date | None = None,
     expiry_date: date | None = None,
@@ -141,7 +170,7 @@ def make_subscription(
         customer_id=customer.id,
         plan_id=plan.id,
         status=status,
-        start_date=start_date or next_billing_date,
+        start_date=start_date or next_billing_date or date.today(),
         expiry_date=expiry_date,
         payment_terms_days=payment_terms_days,
         next_billing_date=next_billing_date,

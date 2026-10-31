@@ -3,12 +3,9 @@ from datetime import date
 from decimal import Decimal
 from fastapi.testclient import TestClient
 
-from app.models import Customer, Invoice, InvoiceLine, InvoiceLineType, InvoiceStatus, UserRole
-<<<<<<< Updated upstream
-from app.services.payments import record_payment
+from app.models import Customer, Invoice, InvoiceStatus, UserRole
 from app.models.enums import PaymentMethod
-=======
->>>>>>> Stashed changes
+from app.services.payments import record_payment
 from tests.billing_factories import make_plan, make_product, make_subscription
 from tests.conftest import PASSWORD
 
@@ -20,7 +17,7 @@ def _login(client: TestClient, email: str) -> None:
 
 @pytest.fixture
 def invoice_fixture(db, make_user):
-    cust_user = make_user("cust_m4@example.com", UserRole.CUSTOMER, with_customer=True)
+    make_user("cust_m4@example.com", UserRole.CUSTOMER, with_customer=True)
     customer = db.query(Customer).filter(Customer.email == "cust_m4@example.com").first()
 
     subscription = make_subscription(
