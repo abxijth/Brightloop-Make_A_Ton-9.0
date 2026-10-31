@@ -7,6 +7,7 @@ import { CustomerPortalLayout } from './components/layout/CustomerPortalLayout';
 import { BackOfficeLayout, UserRole } from './components/layout/BackOfficeLayout';
 import { MySubscriptionsPage } from './pages/MySubscriptionsPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { StaffPage } from './pages/StaffPage';
 import { OutboxPage } from './pages/OutboxPage';
 import { SubscriptionsBackOfficePage } from './pages/SubscriptionsBackOfficePage';
 import { InvoicesPage } from './pages/InvoicesPage';
@@ -108,14 +109,7 @@ function AppRoutes() {
             </div>
           }
         />
-        <Route
-          path="/config/staff"
-          element={
-            <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl bg-card">
-              Staff management coming soon.
-            </div>
-          }
-        />
+        <Route path="/config/staff" element={<StaffPage />} />
       </Route>
 
       {/* Customer Portal shell (Customer) */}
