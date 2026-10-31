@@ -7,6 +7,7 @@ import { CustomerPortalLayout } from './components/layout/CustomerPortalLayout';
 import { BackOfficeLayout, UserRole } from './components/layout/BackOfficeLayout';
 import { MySubscriptionsPage } from './pages/MySubscriptionsPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { OutboxPage } from './pages/OutboxPage';
 import { SubscriptionsBackOfficePage } from './pages/SubscriptionsBackOfficePage';
 
 function AppRoutes() {
@@ -65,14 +66,7 @@ function AppRoutes() {
             </div>
           }
         />
-        <Route
-          path="/billing/outbox"
-          element={
-            <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl bg-card">
-              Outbox emails ledger coming soon.
-            </div>
-          }
-        />
+        <Route path="/billing/outbox" element={<OutboxPage />} />
         <Route
           path="/customers"
           element={
