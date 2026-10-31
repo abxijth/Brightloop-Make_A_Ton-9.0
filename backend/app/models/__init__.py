@@ -12,6 +12,8 @@ from app.models.enums import (
     UserRole,
     ValueType,
 )
+from app.models.quotation import QuotationTemplate, QuotationTemplateLine
+from app.models.subscription import Subscription, SubscriptionLine
 from app.models.tax import Tax
 from app.models.user import PasswordResetToken, User
 
@@ -28,6 +30,10 @@ __all__ = [
     "Plan",
     "Product",
     "ProductVariant",
+    "QuotationTemplate",
+    "QuotationTemplateLine",
+    "Subscription",
+    "SubscriptionLine",
     "SubscriptionStatus",
     "Tax",
     "User",
