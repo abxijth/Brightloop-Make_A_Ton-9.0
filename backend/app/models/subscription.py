@@ -27,6 +27,7 @@ from app.models.enums import SubscriptionStatus, enum_values
 if TYPE_CHECKING:
     from app.models.catalog import Plan, Product, ProductVariant
     from app.models.customer import Customer
+    from app.models.invoice import Invoice
 
 
 subscription_number_seq = Sequence("subscription_number_seq", metadata=Base.metadata)
@@ -85,6 +86,9 @@ class Subscription(Base):
         "SubscriptionLine",
         back_populates="subscription",
         cascade="all, delete-orphan",
+    )
+    invoices: Mapped[list[Invoice]] = relationship(
+        "Invoice", back_populates="subscription"
     )
 
 

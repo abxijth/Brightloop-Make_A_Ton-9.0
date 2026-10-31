@@ -12,6 +12,9 @@ from app.models.enums import (
     UserRole,
     ValueType,
 )
+from app.models.invoice import Invoice, InvoiceLine
+from app.models.outbox import Outbox
+from app.models.payment import Payment
 from app.models.quotation import QuotationTemplate, QuotationTemplateLine
 from app.models.subscription import Subscription, SubscriptionLine
 from app.models.tax import Tax
@@ -23,9 +26,13 @@ __all__ = [
     "DiscountRule",
     "DiscountScope",
     "EmailType",
+    "Invoice",
+    "InvoiceLine",
     "InvoiceLineType",
     "InvoiceStatus",
+    "Outbox",
     "PasswordResetToken",
+    "Payment",
     "PaymentMethod",
     "Plan",
     "Product",
