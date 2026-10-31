@@ -14,6 +14,8 @@ import { InvoicesPage } from './pages/InvoicesPage';
 import { AccountPage } from './pages/AccountPage';
 import { BackOfficeInvoicesPage } from './pages/BackOfficeInvoicesPage';
 import { PaymentsPage } from './pages/PaymentsPage';
+import { CustomersPage } from './pages/CustomersPage';
+import { CustomerDetailPage } from './pages/CustomerDetailPage';
 
 function AppRoutes() {
   const [currentRole, setCurrentRole] = useState<UserRole>('admin');
@@ -58,14 +60,8 @@ function AppRoutes() {
           }
         />
         <Route path="/billing/outbox" element={<OutboxPage />} />
-        <Route
-          path="/customers"
-          element={
-            <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl bg-card">
-              Customers directory coming soon.
-            </div>
-          }
-        />
+        <Route path="/customers" element={<CustomersPage />} />
+        <Route path="/customers/:id" element={<CustomerDetailPage />} />
         <Route
           path="/catalog/products"
           element={

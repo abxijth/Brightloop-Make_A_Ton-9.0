@@ -35,3 +35,5 @@ export const apiGet = <T>(path: string, params?: Record<string, string | number 
   request<T>('GET', path, params);
 
 export const apiPost = <T>(path: string, body?: unknown) => request<T>('POST', path, undefined, body ?? {});
+
+export const apiPatch = <T>(path: string, body: unknown) => request<T>('PATCH', path, undefined, body);
