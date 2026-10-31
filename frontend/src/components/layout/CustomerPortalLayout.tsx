@@ -71,22 +71,12 @@ export const CustomerPortalLayout: React.FC<CustomerPortalLayoutProps> = ({ onSw
 
           <div className="flex items-center gap-3">
             {onSwitchRole && (
-              <div className="hidden sm:flex items-center gap-1 border border-border px-1.5 py-0.5 rounded text-[11px]">
-                <span className="text-muted-foreground">Demo Role:</span>
-                <button
-                  onClick={() => onSwitchRole('admin')}
-                  className="px-1 text-primary hover:underline font-semibold"
-                >
-                  Admin
-                </button>
-                <span className="text-muted-foreground">/</span>
-                <button
-                  onClick={() => onSwitchRole('staff')}
-                  className="px-1 text-primary hover:underline font-semibold"
-                >
-                  Staff
-                </button>
-              </div>
+              <button
+                onClick={() => onSwitchRole('admin')}
+                className="text-xs text-muted-foreground hover:text-foreground border border-border px-2.5 py-1 rounded-md"
+              >
+                Back-office
+              </button>
             )}
             <ThemeToggle />
           </div>
