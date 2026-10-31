@@ -2,11 +2,36 @@
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from app.errors import AppError
 
 from app.models.enums import BillingPeriod, DiscountScope, ValueType
+
+
+def apply_update(obj, body: BaseModel, base_model: type[BaseModel], *, skip: tuple[str, ...] = ()) -> dict:
+    """Apply only the fields the client sent (so explicit null clears a field).
+
+    The merged state (stored values + changes) is validated with the Create-side
+    model, so cross-field rules hold for partial updates too. Returns the applied data.
+    """
+    data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if k not in skip}
+    merged = {name: getattr(obj, name) for name in base_model.model_fields if hasattr(obj, name)}
+    merged.update(data)
+    try:
+        base_model.model_validate(merged)
+    except ValidationError as exc:
+        fields: dict[str, str] = {}
+        for err in exc.errors():
+            loc = ".".join(str(p) for p in err["loc"]) or "_"
+            fields.setdefault(loc, err["msg"].removeprefix("Value error, "))
+        raise AppError(
+            "Please fix the highlighted fields.", code="validation_error", status_code=422, fields=fields
+        ) from exc
+    for key, value in data.items():
+        setattr(obj, key, value)
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -53,11 +78,6 @@ class TaxUpdate(BaseModel):
                 raise ValueError("Name cannot be empty")
         return v
 
-    @model_validator(mode="after")
-    def _validate_tax_value(self) -> "TaxUpdate":
-        if self.type == ValueType.PERCENT and self.value is not None and self.value > Decimal("100.00"):
-            raise ValueError("Percentage tax rate cannot exceed 100%")
-        return self
 
 
 class TaxOut(TaxBase):
@@ -215,12 +235,6 @@ class PlanUpdate(BaseModel):
                 raise ValueError("Name cannot be empty")
         return v
 
-    @model_validator(mode="after")
-    def _validate_dates(self) -> "PlanUpdate":
-        if self.available_to is not None and self.available_from is not None:
-            if self.available_to < self.available_from:
-                raise ValueError("available_to cannot be earlier than available_from")
-        return self
 
 
 class PlanOut(PlanBase):
@@ -300,16 +314,6 @@ class DiscountRuleUpdate(BaseModel):
                 raise ValueError("Name cannot be empty")
         return v
 
-    @model_validator(mode="after")
-    def _validate_rule(self) -> "DiscountRuleUpdate":
-        if self.type == ValueType.PERCENT and self.value is not None and self.value > Decimal("100.00"):
-            raise ValueError("Percentage discount cannot exceed 100%")
-        if self.end_date is not None and self.start_date is not None:
-            if self.end_date < self.start_date:
-                raise ValueError("end_date cannot be earlier than start_date")
-        if self.scope == DiscountScope.PRODUCT and self.product_id is None:
-            raise ValueError("product_id is required when scope is 'product'")
-        return self
 
 
 class DiscountRuleOut(DiscountRuleBase):

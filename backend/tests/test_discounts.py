@@ -345,7 +345,7 @@ def test_tax_calculated_on_the_discounted_amount(db):
     db.commit()
 
     # 20.00 fixed discount on the subscription
-    rule = _rule(db, "Twenty off", value="20.00")
+    _rule(db, "Twenty off", value="20.00")
 
     discounts = find_applicable_discounts(db, subscription, Decimal("100.00"), TODAY)
     assert len(discounts) == 1

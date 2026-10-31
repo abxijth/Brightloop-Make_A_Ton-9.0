@@ -10,7 +10,7 @@ from app.auth import require_admin
 from app.db import get_db
 from app.errors import AppError
 from app.models.catalog import Plan
-from app.schemas.catalog import PlanCreate, PlanOut, PlanPage, PlanUpdate
+from app.schemas.catalog import PlanBase, PlanCreate, PlanOut, PlanPage, PlanUpdate, apply_update
 
 router = APIRouter(prefix="/plans", tags=["plans"], dependencies=[Depends(require_admin)])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -73,24 +73,7 @@ def create_plan(body: PlanCreate, db: DbSession):
 @router.put("/{plan_id}", response_model=PlanOut)
 def update_plan(plan_id: int, body: PlanUpdate, db: DbSession):
     plan = _get_plan(db, plan_id)
-    if body.name is not None:
-        plan.name = body.name
-    if body.price is not None:
-        plan.price = body.price
-    if body.billing_period is not None:
-        plan.billing_period = body.billing_period
-    if body.min_quantity is not None:
-        plan.min_quantity = body.min_quantity
-    if body.available_from is not None:
-        plan.available_from = body.available_from
-    if body.available_to is not None:
-        plan.available_to = body.available_to
-    if body.auto_close is not None:
-        plan.auto_close = body.auto_close
-    if body.allow_early_close is not None:
-        plan.allow_early_close = body.allow_early_close
-    if body.is_active is not None:
-        plan.is_active = body.is_active
+    apply_update(plan, body, PlanBase)
 
     db.commit()
     db.refresh(plan)

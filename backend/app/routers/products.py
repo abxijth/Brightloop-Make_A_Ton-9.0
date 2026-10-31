@@ -12,7 +12,7 @@ from app.db import get_db
 from app.errors import AppError
 from app.models.catalog import Product, ProductVariant
 from app.models.tax import Tax
-from app.schemas.catalog import ProductCreate, ProductOut, ProductPage, ProductUpdate
+from app.schemas.catalog import ProductBase, ProductCreate, ProductOut, ProductPage, ProductUpdate, apply_update
 
 router = APIRouter(prefix="/products", tags=["products"], dependencies=[Depends(require_admin)])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -96,38 +96,40 @@ def create_product(body: ProductCreate, db: DbSession):
 @router.put("/{product_id}", response_model=ProductOut)
 def update_product(product_id: int, body: ProductUpdate, db: DbSession):
     product = _get_product(db, product_id)
-    if body.tax_id is not None:
-        if db.get(Tax, body.tax_id) is None:
-            raise AppError("Selected tax does not exist.", code="validation_error", status_code=400, fields={"tax_id": "Tax not found"})
+    if body.tax_id is not None and db.get(Tax, body.tax_id) is None:
+        raise AppError("Selected tax does not exist.", code="validation_error", status_code=400, fields={"tax_id": "Tax not found"})
 
-    if body.name is not None:
-        product.name = body.name
-    if body.type is not None:
-        product.type = body.type
-    if body.sales_price is not None:
-        product.sales_price = body.sales_price
-    if body.tax_id is not None:
-        product.tax_id = body.tax_id
-    if body.is_active is not None:
-        product.is_active = body.is_active
+    apply_update(product, body, ProductBase, skip=("variants",))
 
     if body.variants is not None:
-        # Reconcile variants
-        product.variants.clear()
+        # Reconcile by (attribute, value) so unchanged variants keep their ids
+        # (subscription/quotation lines reference variant_id).
+        incoming: dict[tuple[str, str], object] = {}
         for v in body.variants:
-            product.variants.append(
-                ProductVariant(
-                    attribute=v.attribute,
-                    value=v.value,
-                    extra_price=v.extra_price,
+            key = (v.attribute, v.value)
+            if key in incoming:
+                raise AppError(
+                    "Duplicate variant in request.", code="validation_error", status_code=422,
+                    fields={"variants": f"Duplicate variant {v.attribute}: {v.value}"},
                 )
-            )
+            incoming[key] = v
+        existing = {(v.attribute, v.value): v for v in product.variants}
+        for key, variant in existing.items():
+            if key not in incoming:
+                product.variants.remove(variant)
+        for key, v in incoming.items():
+            if key in existing:
+                existing[key].extra_price = v.extra_price
+            else:
+                product.variants.append(
+                    ProductVariant(attribute=v.attribute, value=v.value, extra_price=v.extra_price)
+                )
 
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise AppError("Variant attributes must be unique per product.", code="validation_error", status_code=400)
+        raise AppError("Could not save variants: a variant is duplicated or still in use.", code="validation_error", status_code=400)
 
     db.refresh(product)
     return product

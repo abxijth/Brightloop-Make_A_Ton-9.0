@@ -1,7 +1,4 @@
-from datetime import date
-from decimal import Decimal
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.models import UserRole
@@ -159,3 +156,61 @@ def test_discounts_endpoints(client: TestClient, make_user):
     up_res = client.put(f"/discounts/{disc_id}", json={"usage_limit": 100})
     assert up_res.status_code == 200
     assert up_res.json()["usage_limit"] == 100
+
+
+def test_update_can_clear_fields_and_revalidates_merged_state(client: TestClient, make_user):
+    admin = make_user("admin_upd@example.com", UserRole.ADMIN)
+    _login(client, admin.email)
+
+    plan = client.post(
+        "/plans",
+        json={"name": "P", "price": "10.00", "billing_period": "monthly",
+              "available_from": "2026-03-01", "available_to": "2026-12-31"},
+    ).json()
+    # explicit null clears
+    res = client.put(f"/plans/{plan['id']}", json={"available_to": None})
+    assert res.status_code == 200 and res.json()["available_to"] is None
+    # only available_to sent, earlier than stored available_from
+    res = client.put(f"/plans/{plan['id']}", json={"available_to": "2026-01-01"})
+    assert res.status_code == 422
+
+    tax = client.post("/taxes", json={"name": "T", "type": "fixed", "value": "500.00"}).json()
+    res = client.put(f"/taxes/{tax['id']}", json={"type": "percent"})
+    assert res.status_code == 422
+
+    rule = client.post(
+        "/discounts",
+        json={"name": "R", "type": "percent", "value": "10", "start_date": "2026-01-01",
+              "end_date": "2026-12-31", "usage_limit": 5},
+    ).json()
+    res = client.put(f"/discounts/{rule['id']}", json={"end_date": None, "usage_limit": None})
+    assert res.status_code == 200
+    assert res.json()["end_date"] is None and res.json()["usage_limit"] is None
+    assert client.put(f"/discounts/{rule['id']}", json={"end_date": "2025-01-01"}).status_code == 422
+    # product_id on a subscription-scoped rule is rejected, not ignored
+    assert client.put(f"/discounts/{rule['id']}", json={"product_id": 1}).status_code == 422
+
+
+def test_product_update_keeps_unchanged_variant_ids(client: TestClient, make_user):
+    admin = make_user("admin_var@example.com", UserRole.ADMIN)
+    _login(client, admin.email)
+    prod = client.post(
+        "/products",
+        json={"name": "H", "sales_price": "5.00",
+              "variants": [{"attribute": "RAM", "value": "16GB", "extra_price": "1.00"},
+                           {"attribute": "RAM", "value": "32GB", "extra_price": "2.00"}]},
+    ).json()
+    ids = {v["value"]: v["id"] for v in prod["variants"]}
+    res = client.put(
+        f"/products/{prod['id']}",
+        json={"variants": [{"attribute": "RAM", "value": "16GB", "extra_price": "9.00"}]},
+    )
+    assert res.status_code == 200
+    out = res.json()["variants"]
+    assert len(out) == 1 and out[0]["id"] == ids["16GB"] and out[0]["extra_price"] == "9.00"
+    dup = client.put(
+        f"/products/{prod['id']}",
+        json={"variants": [{"attribute": "A", "value": "b"}, {"attribute": "A", "value": "b"}]},
+    )
+    assert dup.status_code == 422
+    assert client.put(f"/products/{prod['id']}", json={"tax_id": None}).status_code == 200

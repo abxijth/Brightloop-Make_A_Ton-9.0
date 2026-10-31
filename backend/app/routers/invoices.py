@@ -1,6 +1,5 @@
 """Invoices and payments back-office & portal endpoints."""
 
-from datetime import date
 from decimal import Decimal
 from typing import Annotated
 from html import escape
@@ -9,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app.auth import get_current_user, require_customer, require_staff_or_admin
+from app.auth import get_current_user, require_staff_or_admin
 from app.db import get_db
 from app.errors import AppError
 from app.models.customer import Customer

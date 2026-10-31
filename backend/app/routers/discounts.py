@@ -4,7 +4,7 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import require_admin
@@ -15,10 +15,12 @@ from app.models.discount import DiscountRule
 from app.models.enums import DiscountScope, InvoiceLineType, InvoiceStatus
 from app.models.invoice import Invoice, InvoiceLine
 from app.schemas.catalog import (
+    DiscountRuleBase,
     DiscountRuleCreate,
     DiscountRuleOut,
     DiscountRulePage,
     DiscountRuleUpdate,
+    apply_update,
 )
 
 router = APIRouter(prefix="/discounts", tags=["discounts"], dependencies=[Depends(require_admin)])
@@ -148,35 +150,23 @@ def create_discount(body: DiscountRuleCreate, db: DbSession):
 @router.put("/{rule_id}", response_model=DiscountRuleOut)
 def update_discount(rule_id: int, body: DiscountRuleUpdate, db: DbSession):
     rule = _get_rule(db, rule_id)
-    if body.product_id is not None or body.scope == DiscountScope.PRODUCT:
-        target_pid = body.product_id if body.product_id is not None else rule.product_id
-        if not target_pid or db.get(Product, target_pid) is None:
-            raise AppError("Selected product does not exist.", code="validation_error", status_code=400, fields={"product_id": "Product not found"})
-
-    if body.name is not None:
-        rule.name = body.name
-    if body.type is not None:
-        rule.type = body.type
-    if body.value is not None:
-        rule.value = body.value
-    if body.min_purchase is not None:
-        rule.min_purchase = body.min_purchase
-    if body.min_quantity is not None:
-        rule.min_quantity = body.min_quantity
-    if body.start_date is not None:
-        rule.start_date = body.start_date
-    if body.end_date is not None:
-        rule.end_date = body.end_date
-    if body.usage_limit is not None:
-        rule.usage_limit = body.usage_limit
-    if body.scope is not None:
-        rule.scope = body.scope
-        if body.scope == DiscountScope.SUBSCRIPTION:
-            rule.product_id = None
-    if body.product_id is not None and rule.scope == DiscountScope.PRODUCT:
-        rule.product_id = body.product_id
-    if body.is_active is not None:
-        rule.is_active = body.is_active
+    sent = body.model_fields_set
+    new_scope = body.scope if "scope" in sent and body.scope is not None else rule.scope
+    if new_scope == DiscountScope.SUBSCRIPTION:
+        if body.product_id is not None:
+            raise AppError(
+                "A product can only be set on a product-scoped discount.",
+                code="validation_error",
+                status_code=422,
+                fields={"product_id": "Only valid when scope is 'product'"},
+            )
+        if "scope" in sent:
+            body.product_id = None  # switching to subscription scope detaches the product
+            body.model_fields_set.add("product_id")
+    apply_update(rule, body, DiscountRuleBase, skip=("product_name",))
+    if rule.scope == DiscountScope.PRODUCT and db.get(Product, rule.product_id) is None:
+        db.rollback()
+        raise AppError("Selected product does not exist.", code="validation_error", status_code=400, fields={"product_id": "Product not found"})
 
     db.commit()
     db.refresh(rule)

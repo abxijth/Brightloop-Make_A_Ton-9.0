@@ -3,14 +3,14 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth import require_admin
 from app.db import get_db
 from app.errors import AppError
 from app.models.tax import Tax
-from app.schemas.catalog import TaxCreate, TaxOut, TaxPage, TaxUpdate
+from app.schemas.catalog import TaxBase, TaxCreate, TaxOut, TaxPage, TaxUpdate, apply_update
 
 router = APIRouter(prefix="/taxes", tags=["taxes"], dependencies=[Depends(require_admin)])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -68,14 +68,7 @@ def create_tax(body: TaxCreate, db: DbSession):
 @router.put("/{tax_id}", response_model=TaxOut)
 def update_tax(tax_id: int, body: TaxUpdate, db: DbSession):
     tax = _get_tax(db, tax_id)
-    if body.name is not None:
-        tax.name = body.name
-    if body.type is not None:
-        tax.type = body.type
-    if body.value is not None:
-        tax.value = body.value
-    if body.is_active is not None:
-        tax.is_active = body.is_active
+    apply_update(tax, body, TaxBase)
 
     db.commit()
     db.refresh(tax)
