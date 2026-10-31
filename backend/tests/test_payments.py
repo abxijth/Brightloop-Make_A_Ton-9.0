@@ -4,8 +4,12 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 from app.models import Customer, Invoice, InvoiceLine, InvoiceLineType, InvoiceStatus, UserRole
+<<<<<<< Updated upstream
 from app.services.payments import record_payment
 from app.models.enums import PaymentMethod
+=======
+>>>>>>> Stashed changes
+from tests.billing_factories import make_plan, make_product, make_subscription
 from tests.conftest import PASSWORD
 
 
@@ -19,9 +23,16 @@ def invoice_fixture(db, make_user):
     cust_user = make_user("cust_m4@example.com", UserRole.CUSTOMER, with_customer=True)
     customer = db.query(Customer).filter(Customer.email == "cust_m4@example.com").first()
 
+    subscription = make_subscription(
+        db,
+        customer=customer,
+        plan=make_plan(db),
+        lines=[(make_product(db), 1, Decimal("1000.00"))],
+        next_billing_date=date(2026, 11, 1),
+    )
     inv = Invoice(
         number="INV-2001",
-        subscription_id=1,
+        subscription_id=subscription.id,
         customer_id=customer.id,
         period_start=date(2026, 10, 1),
         period_end=date(2026, 10, 31),
@@ -50,7 +61,7 @@ def test_payment_overpayment_rejected(client: TestClient, make_user, invoice_fix
         json={"amount": "1200.00", "method": "bank_transfer"},
     )
     assert res.status_code == 400
-    assert "exceeds" in res.json()["message"].lower()
+    assert "exceeds" in res.json()["error"]["message"].lower()
 
 
 def test_partial_then_full_payment(client: TestClient, make_user, invoice_fixture):
