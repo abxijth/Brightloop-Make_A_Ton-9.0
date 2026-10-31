@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   PlayCircle,
   RotateCcw,
@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '../components/shared/Toast';
 import { formatCurrency, cn } from '../lib/utils';
+import { apiGet, apiPost } from '../lib/api';
 
 interface BillingRunItem {
   subscriptionId: number;
@@ -20,46 +21,79 @@ interface BillingRunItem {
   generatedInvoiceNumber?: string;
 }
 
+interface DueSubscriptionOut {
+  subscription_id: number;
+  subscription_number: string;
+  customer_name: string;
+  plan_name: string;
+  period_start: string;
+  period_end: string;
+  estimated_total: string;
+  already_billed: boolean;
+}
+
+interface BillingDueListOut {
+  items: DueSubscriptionOut[];
+  count: number;
+}
+
+interface BillingRunItemOut {
+  subscription_id: number;
+  subscription_number: string;
+  outcome: string;
+  reason?: string;
+  invoice_id?: number;
+  invoice_number?: string;
+}
+
+interface BillingRunResultOut {
+  created: BillingRunItemOut[];
+  skipped: BillingRunItemOut[];
+  failed: BillingRunItemOut[];
+}
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export function BillingRunPage() {
   const { toast } = useToast();
   const [autoConfirmInvoices, setAutoConfirmInvoices] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
-  const [selectedSubIds, setSelectedSubIds] = useState<number[]>([1, 2]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [selectedSubIds, setSelectedSubIds] = useState<number[]>([]);
+  const [items, setItems] = useState<BillingRunItem[]>([]);
 
-  // Seeded due subscriptions for demonstration
-  const [items, setItems] = useState<BillingRunItem[]>([
-    {
-      subscriptionId: 1,
-      subscriptionNumber: 'SUB-0001',
-      customerName: 'Acme Technologies Pvt Ltd',
-      planName: 'Enterprise Cloud Pro',
-      periodStart: '2026-11-15',
-      periodEnd: '2026-12-14',
-      amount: 32499,
-      status: 'due',
-    },
-    {
-      subscriptionId: 2,
-      subscriptionNumber: 'SUB-0002',
-      customerName: 'Nexus Global Logistics',
-      planName: 'Startup Growth Suite Standard',
-      periodStart: '2026-11-01',
-      periodEnd: '2026-11-30',
-      amount: 4999,
-      status: 'due',
-    },
-    {
-      subscriptionId: 4,
-      subscriptionNumber: 'SUB-0004',
-      customerName: 'Aura Media Studio',
-      planName: 'Enterprise Cloud Pro',
-      periodStart: '2026-01-01',
-      periodEnd: '2026-01-31',
-      amount: 12500,
-      status: 'skipped',
-      reason: 'subscription already closed',
-    },
-  ]);
+  // ── Fetch due subscriptions from live API on mount ──────────────────────
+  useEffect(() => {
+    setIsLoading(true);
+    apiGet<BillingDueListOut>('/billing/due', { as_of: todayIso() })
+      .then((data) => {
+        const mapped: BillingRunItem[] = data.items.map((d) => ({
+          subscriptionId: d.subscription_id,
+          subscriptionNumber: d.subscription_number,
+          customerName: d.customer_name,
+          planName: d.plan_name,
+          periodStart: d.period_start,
+          periodEnd: d.period_end,
+          amount: parseFloat(d.estimated_total),
+          status: d.already_billed ? 'skipped' : 'due',
+          reason: d.already_billed ? 'already billed for this period' : undefined,
+        }));
+        setItems(mapped);
+        // Auto-select all that are actually due
+        setSelectedSubIds(mapped.filter((i) => i.status === 'due').map((i) => i.subscriptionId));
+      })
+      .catch(() => {
+        toast({
+          type: 'error',
+          title: 'Failed to Load Due Subscriptions',
+          message: 'Could not fetch billing queue from the server.',
+        });
+      })
+      .finally(() => setIsLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const dueItems = useMemo(() => items.filter((i) => i.status === 'due'), [items]);
 
@@ -77,7 +111,7 @@ export function BillingRunPage() {
     );
   };
 
-  const handleRunBatchBilling = () => {
+  const handleRunBatchBilling = async () => {
     if (selectedSubIds.length === 0) {
       toast({
         type: 'error',
@@ -88,37 +122,51 @@ export function BillingRunPage() {
     }
 
     setIsRunning(true);
-    setTimeout(() => {
-      let createdCount = 0;
-      let skippedCount = 0;
+    try {
+      const result = await apiPost<BillingRunResultOut>('/billing/run', {
+        subscription_ids: selectedSubIds,
+        confirm: autoConfirmInvoices,
+      });
+
+      // Build lookup maps from API response
+      const createdMap = new Map(result.created.map((r) => [r.subscription_id, r]));
+      const skippedMap = new Map(result.skipped.map((r) => [r.subscription_id, r]));
+      const failedMap = new Map(result.failed.map((r) => [r.subscription_id, r]));
 
       setItems((prev) =>
         prev.map((item) => {
-          if (selectedSubIds.includes(item.subscriptionId)) {
-            if (item.status === 'created') {
-              skippedCount++;
-              return { ...item, status: 'skipped', reason: 'already billed for this period (idempotent)' };
-            }
-            createdCount++;
-            return {
-              ...item,
-              status: 'created',
-              generatedInvoiceNumber: `INV-0${Math.floor(125 + Math.random() * 20)}`,
-            };
+          if (createdMap.has(item.subscriptionId)) {
+            const r = createdMap.get(item.subscriptionId)!;
+            return { ...item, status: 'created', generatedInvoiceNumber: r.invoice_number ?? undefined };
+          }
+          if (skippedMap.has(item.subscriptionId)) {
+            const r = skippedMap.get(item.subscriptionId)!;
+            return { ...item, status: 'skipped', reason: r.reason ?? 'skipped' };
+          }
+          if (failedMap.has(item.subscriptionId)) {
+            const r = failedMap.get(item.subscriptionId)!;
+            return { ...item, status: 'failed', reason: r.reason ?? 'unknown error' };
           }
           return item;
         })
       );
 
-      setIsRunning(false);
       toast({
         type: 'success',
         title: 'Billing Run Completed',
-        message: `Batch finished: ${createdCount} invoices created, ${skippedCount} skipped. Status: ${
+        message: `Batch finished: ${result.created.length} invoices created, ${result.skipped.length} skipped, ${result.failed.length} failed. Status: ${
           autoConfirmInvoices ? 'Confirmed' : 'Draft'
         }.`,
       });
-    }, 900);
+    } catch {
+      toast({
+        type: 'error',
+        title: 'Billing Run Failed',
+        message: 'An error occurred while running the billing batch.',
+      });
+    } finally {
+      setIsRunning(false);
+    }
   };
 
   const createdTotal = items.filter((i) => i.status === 'created').length;
@@ -151,7 +199,7 @@ export function BillingRunPage() {
 
           <button
             onClick={handleRunBatchBilling}
-            disabled={isRunning || dueItems.length === 0}
+            disabled={isRunning || isLoading || dueItems.length === 0}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground font-semibold text-xs shadow-xs hover:bg-primary/90 transition-all disabled:opacity-50"
           >
             {isRunning ? (
@@ -249,50 +297,69 @@ export function BillingRunPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {items.map((item) => (
-                <tr
-                  key={item.subscriptionId}
-                  className={cn(
-                    'transition-colors',
-                    selectedSubIds.includes(item.subscriptionId) ? 'bg-primary/5' : 'hover:bg-muted/20'
-                  )}
-                >
-                  <td className="py-3 px-4 text-center">
-                    <input
-                      type="checkbox"
-                      checked={selectedSubIds.includes(item.subscriptionId)}
-                      onChange={() => toggleSelectItem(item.subscriptionId)}
-                      className="rounded border-border text-primary focus:ring-primary"
-                    />
-                  </td>
-                  <td className="py-3 px-4 font-mono font-semibold text-foreground">
-                    {item.subscriptionNumber}
-                  </td>
-                  <td className="py-3 px-4 font-medium text-foreground">{item.customerName}</td>
-                  <td className="py-3 px-4 text-muted-foreground">{item.planName}</td>
-                  <td className="py-3 px-4 text-muted-foreground">
-                    {item.periodStart} &rarr; {item.periodEnd}
-                  </td>
-                  <td className="py-3 px-4 text-right font-semibold text-foreground">
-                    {formatCurrency(item.amount)}
-                  </td>
-                  <td className="py-3 px-4 text-center">
-                    {item.status === 'due' ? (
-                      <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-900">
-                        Due for Billing
-                      </span>
-                    ) : item.status === 'created' ? (
-                      <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-900 flex items-center justify-center gap-1">
-                        <Check className="w-3 h-3" /> {item.generatedInvoiceNumber}
-                      </span>
-                    ) : (
-                      <span className="text-[11px] font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
-                        Skipped ({item.reason})
-                      </span>
-                    )}
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                    <RotateCcw className="w-4 h-4 animate-spin inline mr-2" />
+                    Loading due subscriptions…
                   </td>
                 </tr>
-              ))}
+              ) : items.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                    No subscriptions due for billing today.
+                  </td>
+                </tr>
+              ) : (
+                items.map((item) => (
+                  <tr
+                    key={item.subscriptionId}
+                    className={cn(
+                      'transition-colors',
+                      selectedSubIds.includes(item.subscriptionId) ? 'bg-primary/5' : 'hover:bg-muted/20'
+                    )}
+                  >
+                    <td className="py-3 px-4 text-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedSubIds.includes(item.subscriptionId)}
+                        onChange={() => toggleSelectItem(item.subscriptionId)}
+                        className="rounded border-border text-primary focus:ring-primary"
+                      />
+                    </td>
+                    <td className="py-3 px-4 font-mono font-semibold text-foreground">
+                      {item.subscriptionNumber}
+                    </td>
+                    <td className="py-3 px-4 font-medium text-foreground">{item.customerName}</td>
+                    <td className="py-3 px-4 text-muted-foreground">{item.planName}</td>
+                    <td className="py-3 px-4 text-muted-foreground">
+                      {item.periodStart} &rarr; {item.periodEnd}
+                    </td>
+                    <td className="py-3 px-4 text-right font-semibold text-foreground">
+                      {formatCurrency(item.amount)}
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      {item.status === 'due' ? (
+                        <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-900">
+                          Due for Billing
+                        </span>
+                      ) : item.status === 'created' ? (
+                        <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-900 flex items-center justify-center gap-1">
+                          <Check className="w-3 h-3" /> {item.generatedInvoiceNumber}
+                        </span>
+                      ) : item.status === 'failed' ? (
+                        <span className="text-[11px] font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 px-2 py-0.5 rounded-full border border-red-200 dark:border-red-900">
+                          Failed ({item.reason})
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                          Skipped ({item.reason})
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
