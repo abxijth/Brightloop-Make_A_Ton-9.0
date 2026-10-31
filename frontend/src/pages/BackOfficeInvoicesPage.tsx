@@ -8,6 +8,8 @@ import {
   AlertCircle,
   Eye,
   Check,
+  Send,
+  XCircle,
 } from 'lucide-react';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { Stepper } from '../components/shared/Stepper';
@@ -102,6 +104,37 @@ export function BackOfficeInvoicesPage() {
         message: `Invoice ${selectedInvoice.number} has been transitioned from Draft to Confirmed.`,
       });
     }, 400);
+  };
+
+  const handleSendToOutbox = () => {
+    if (!selectedInvoice) return;
+    toast({
+      type: 'success',
+      title: 'Invoice Sent',
+      message: `Invoice ${selectedInvoice.number} has been queued into the Outbox for ${selectedInvoice.customer_email}.`,
+    });
+  };
+
+  const handleCancelInvoice = () => {
+    if (!selectedInvoice) return;
+    if (selectedInvoice.amount_paid > 0) {
+      toast({
+        type: 'error',
+        title: 'Cannot Cancel',
+        message: 'Cannot cancel an invoice with payments applied.',
+      });
+      return;
+    }
+    setInvoices((prev) =>
+      prev.map((inv) =>
+        inv.id === selectedInvoice.id ? { ...inv, status: 'draft', amount_due: 0 } : inv
+      )
+    );
+    toast({
+      type: 'info',
+      title: 'Invoice Cancelled',
+      message: `Invoice ${selectedInvoice.number} has been cancelled.`,
+    });
   };
 
   const handleOpenRecordPayment = () => {
@@ -417,6 +450,27 @@ export function BackOfficeInvoicesPage() {
               </button>
 
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSendToOutbox}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-border bg-card hover:bg-muted text-foreground flex items-center gap-1.5 transition-colors"
+                  title="Send email notification"
+                >
+                  <Send className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Send</span>
+                </button>
+
+                {selectedInvoice.status !== 'paid' && selectedInvoice.amount_paid === 0 && (
+                  <button
+                    type="button"
+                    onClick={handleCancelInvoice}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-red-200 dark:border-red-900/60 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600 dark:text-red-400 flex items-center gap-1 transition-colors"
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                    <span>Cancel</span>
+                  </button>
+                )}
+
                 {selectedInvoice.status === 'draft' && (
                   <button
                     type="button"
