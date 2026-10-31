@@ -1,8 +1,9 @@
 """Invoices and payments back-office & portal endpoints."""
 
+from datetime import date
 from decimal import Decimal
-from typing import Annotated
 from html import escape
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, or_, select
@@ -12,10 +13,11 @@ from app.auth import get_current_user, require_staff_or_admin
 from app.db import get_db
 from app.errors import AppError
 from app.models.customer import Customer
-from app.models.enums import EmailType, InvoiceStatus
+from app.models.enums import EmailType, InvoiceStatus, PaymentMethod
 from app.models.invoice import Invoice
 from app.models.outbox import Outbox
 from app.models.payment import Payment
+from app.models.subscription import Subscription
 from app.models.user import User
 from app.schemas.invoice import (
     InvoiceDetailOut,
@@ -35,6 +37,15 @@ StaffOrAdmin = Annotated[User, Depends(require_staff_or_admin)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+def _customer_scope(user: User) -> int | None:
+    """Return the customer id for a portal user, or None for staff/admin."""
+    if getattr(user.role, "value", user.role) != "customer":
+        return None
+    if user.customer is None:
+        raise AppError("Customer profile not found.", code="forbidden", status_code=403)
+    return user.customer.id
+
+
 def _to_invoice_out(inv: Invoice) -> InvoiceOut:
     amount_due = max(Decimal("0"), inv.total - inv.amount_paid)
     cust_name = inv.customer.name if inv.customer else None
@@ -43,9 +54,11 @@ def _to_invoice_out(inv: Invoice) -> InvoiceOut:
         id=inv.id,
         number=inv.number,
         subscription_id=inv.subscription_id,
+        subscription_number=inv.subscription.number if inv.subscription else None,
         customer_id=inv.customer_id,
         customer_name=cust_name,
         customer_email=cust_email,
+        customer_address=inv.customer.address if inv.customer else None,
         period_start=inv.period_start,
         period_end=inv.period_end,
         status=inv.status,
@@ -63,25 +76,39 @@ def _to_invoice_out(inv: Invoice) -> InvoiceOut:
 
 
 # ---------------------------------------------------------
-# Staff & Admin Invoices List & Details
+# Invoice list (staff see all; customers see only their own) & details
 # ---------------------------------------------------------
-@router.get("/invoices", response_model=InvoicePage, dependencies=[Depends(require_staff_or_admin)])
+@router.get("/invoices", response_model=InvoicePage)
 def list_invoices(
     db: DbSession,
+    current_user: CurrentUser,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 25,
     status: InvoiceStatus | None = None,
     customer_id: int | None = None,
     subscription_id: int | None = None,
+    overdue: bool = False,
     search: Annotated[str | None, Query(max_length=200)] = None,
     order: Annotated[str, Query(pattern="^(asc|desc)$")] = "desc",
 ):
+    own_customer_id = _customer_scope(current_user)
     query = select(Invoice).join(Customer, Invoice.customer_id == Customer.id, isouter=True)
 
     if status is not None:
         query = query.where(Invoice.status == status)
-    if customer_id is not None:
+    if own_customer_id is not None:
+        # Customers only ever see their own invoices, whatever filter they pass.
+        query = query.where(
+            Invoice.customer_id == own_customer_id,
+            Invoice.status != InvoiceStatus.DRAFT,
+        )
+    elif customer_id is not None:
         query = query.where(Invoice.customer_id == customer_id)
+    if overdue:
+        query = query.where(
+            Invoice.status == InvoiceStatus.CONFIRMED,
+            Invoice.due_date < date.today(),
+        )
     if subscription_id is not None:
         query = query.where(Invoice.subscription_id == subscription_id)
     if search:
@@ -91,6 +118,7 @@ def list_invoices(
                 Invoice.number.ilike(like),
                 Customer.name.ilike(like),
                 Customer.email.ilike(like),
+                Invoice.subscription.has(Subscription.number.ilike(like)),
             )
         )
 
@@ -100,7 +128,7 @@ def list_invoices(
 
     invoices = (
         db.scalars(
-            query.options(joinedload(Invoice.customer))
+            query.options(joinedload(Invoice.customer), joinedload(Invoice.subscription))
             .order_by(sort_col, id_order)
             .offset((page - 1) * page_size)
             .limit(page_size)
@@ -151,7 +179,7 @@ def confirm_invoice(invoice_id: int, db: DbSession):
             selectinload(Invoice.payments),
         )
         .where(Invoice.id == invoice_id)
-        .with_for_update()
+        .with_for_update(of=Invoice)
     )
     if not invoice:
         raise AppError("Invoice not found.", code="not_found", status_code=404)
@@ -185,11 +213,13 @@ def cancel_invoice(invoice_id: int, db: DbSession):
             selectinload(Invoice.payments),
         )
         .where(Invoice.id == invoice_id)
-        .with_for_update()
+        .with_for_update(of=Invoice)
     )
     if not invoice:
         raise AppError("Invoice not found.", code="not_found", status_code=404)
 
+    if invoice.status == InvoiceStatus.CANCELLED:
+        raise AppError("Invoice is already cancelled.", code="invalid_state", status_code=400)
     if invoice.amount_paid > Decimal("0"):
         raise AppError("Cannot cancel an invoice with payments applied.", code="invalid_state", status_code=400)
 
@@ -266,15 +296,17 @@ def record_invoice_payment(
 
 
 # ---------------------------------------------------------
-# Global Payments Ledger (Admin & Staff)
+# Payments ledger (staff see all; customers see only their own)
 # ---------------------------------------------------------
-@router.get("/payments", response_model=PaymentPage, dependencies=[Depends(require_staff_or_admin)])
+@router.get("/payments", response_model=PaymentPage)
 def list_payments(
     db: DbSession,
+    current_user: CurrentUser,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 25,
     customer_id: int | None = None,
     invoice_id: int | None = None,
+    method: PaymentMethod | None = None,
     search: Annotated[str | None, Query(max_length=200)] = None,
     order: Annotated[str, Query(pattern="^(asc|desc)$")] = "desc",
 ):
@@ -284,10 +316,15 @@ def list_payments(
         .join(Invoice, Payment.invoice_id == Invoice.id, isouter=True)
     )
 
-    if customer_id is not None:
+    own_customer_id = _customer_scope(current_user)
+    if own_customer_id is not None:
+        query = query.where(Payment.customer_id == own_customer_id)
+    elif customer_id is not None:
         query = query.where(Payment.customer_id == customer_id)
     if invoice_id is not None:
         query = query.where(Payment.invoice_id == invoice_id)
+    if method is not None:
+        query = query.where(Payment.method == method)
     if search:
         like = f"%{search.strip()}%"
         query = query.where(
@@ -298,7 +335,10 @@ def list_payments(
             )
         )
 
-    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    filtered = query.subquery()
+    total, amount_total = db.execute(
+        select(func.count(), func.coalesce(func.sum(filtered.c.amount), 0)).select_from(filtered)
+    ).one()
     sort_col = Payment.payment_date.asc() if order == "asc" else Payment.payment_date.desc()
     id_order = Payment.id.asc() if order == "asc" else Payment.id.desc()
 
@@ -330,4 +370,6 @@ def list_payments(
         for p in payments
     ]
 
-    return PaymentPage(items=items, total=total, page=page, page_size=page_size)
+    return PaymentPage(
+        items=items, total=total, page=page, page_size=page_size, amount_total=amount_total
+    )

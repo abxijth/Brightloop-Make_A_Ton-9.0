@@ -330,7 +330,7 @@ export function PlansPage() {
             <FormField label="Billing Cycle" required>
               <select
                 value={formData.billingPeriod}
-                onChange={(e) => setFormData({ ...formData, billingPeriod: e.target.value as any })}
+                onChange={(e) => setFormData({ ...formData, billingPeriod: e.target.value as Plan['billingPeriod'] })}
                 className={inputClass}
               >
                 <option value="daily">Daily</option>

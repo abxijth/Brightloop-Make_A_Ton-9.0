@@ -21,11 +21,11 @@ docker compose up -d db
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-alembic upgrade head          # once the initial migration is merged
-python seed.py                # once the seed script is merged
+alembic upgrade head
+python seed.py                # demo data; `python seed.py --reset` wipes and reseeds
 uvicorn app.main:app --reload
 
-# 4. Frontend (http://localhost:5173), once the shell is merged
+# 4. Frontend (http://localhost:5173)
 cd frontend
 npm install
 npm run dev
@@ -42,10 +42,32 @@ Check the backend: `curl http://localhost:8000/health` returns `{"status":"ok"}`
 | Open a SQL shell | `docker compose exec db psql -U brightloop` |
 | Run backend tests | `cd backend && pytest` |
 | Lint backend | `cd backend && ruff check .` |
+| Reseed demo data (deletes all data) | `cd backend && python seed.py --reset` |
+| Typecheck / lint / build frontend | `cd frontend && npx tsc -b && npm run lint && npm run build` |
 
 ## Demo logins
 
-Filled in when `seed.py` lands.
+`python seed.py` creates these accounts, plus 400 customers, 3,000 subscriptions and about 9,700 invoices
+(with overdue ones) so every page can be checked against realistic volume.
+
+| Role | Email | Password | Lands on |
+|---|---|---|---|
+| Admin | `admin@brightloop.com` | `Admin@123` | Finance dashboard (`/dashboard`) |
+| Staff | `staff@brightloop.com` | `Staff@123` | Operational dashboard |
+| Customer | `acme@example.com` | `Customer@123` | Portal: own subscriptions and invoices |
+| Customer | `globex@example.com` | `Customer@123` | Portal |
+| Customer | `initech@example.com` | `Customer@123` | Portal |
+
+Each demo customer has at least one overdue and one open invoice.
+
+## Demo path
+
+1. Admin: dashboard shows active subscriptions, MRR, revenue collected, outstanding and overdue invoices; switch the period filter.
+2. Staff: **Subscriptions → New Subscription**, pick a customer and a quotation template, then Send Quotation → Confirm → Activate.
+3. **Billing → Billing Run**: the new subscription is due today; generate its invoice. Running it again skips it (already billed).
+4. **Billing → Invoices**: open the draft, Confirm, Send (it appears in **Outbox**), then Record Payment (partial, then the rest: it becomes Paid).
+5. **Billing → Payments** lists the payments; the dashboard figures update.
+6. Log in as `acme@example.com`: the portal shows only Acme's subscriptions and invoices; close an active subscription early if its plan allows it.
 
 ## Git workflow
 

@@ -47,6 +47,7 @@ class PaymentPage(BaseModel):
     total: int
     page: int
     page_size: int
+    amount_total: Decimal = Decimal("0")
 
 
 class InvoiceOut(BaseModel):
@@ -55,9 +56,11 @@ class InvoiceOut(BaseModel):
     id: int
     number: str
     subscription_id: int
+    subscription_number: str | None = None
     customer_id: int
     customer_name: str | None = None
     customer_email: str | None = None
+    customer_address: str | None = None
     period_start: date
     period_end: date
     status: InvoiceStatus

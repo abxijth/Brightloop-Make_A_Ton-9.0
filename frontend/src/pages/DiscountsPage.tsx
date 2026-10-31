@@ -369,7 +369,7 @@ export function DiscountsPage() {
             <FormField label="Discount Type" required>
               <select
                 value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
+                onChange={(e) => setFormData({ ...formData, type: e.target.value as DiscountRule['type'] })}
                 className={inputClass}
               >
                 <option value="percent">Percentage (%)</option>
@@ -398,7 +398,7 @@ export function DiscountsPage() {
             <FormField label="Scope" required>
               <select
                 value={formData.scope}
-                onChange={(e) => setFormData({ ...formData, scope: e.target.value as any })}
+                onChange={(e) => setFormData({ ...formData, scope: e.target.value as DiscountRule['scope'] })}
                 className={inputClass}
               >
                 <option value="subscription">Whole Subscription</option>

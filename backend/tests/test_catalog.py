@@ -33,6 +33,11 @@ def test_access_rules(client: TestClient, make_user) -> None:
         assert client.get(path).status_code == 200
     assert client.post("/taxes", json=TAX).status_code == 403
     assert client.post("/plans", json=PLAN).status_code == 403
+    product = {"name": "Seat", "type": "service", "sales_price": "10.00"}
+    assert client.post("/products", json=product).status_code == 403
+    discount = {"name": "Promo", "type": "percent", "value": "10", "start_date": "2026-01-01"}
+    assert client.post("/discounts", json=discount).status_code == 403
+    assert client.post("/staff", json={"email": "s2@example.com", "full_name": "S2"}).status_code == 403
 
 
 def test_customer_cannot_read(client: TestClient, make_user) -> None:

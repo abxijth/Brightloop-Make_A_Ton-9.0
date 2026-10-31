@@ -1,7 +1,7 @@
 import React from 'react';
 import { cn } from '../../lib/utils';
 
-export type StatusType = 'draft' | 'quotation' | 'confirmed' | 'active' | 'closed' | 'overdue' | 'paid';
+export type StatusType = 'draft' | 'quotation' | 'confirmed' | 'active' | 'closed' | 'overdue' | 'paid' | 'cancelled';
 
 interface StatusBadgeProps {
   status: StatusType | string;
@@ -39,6 +39,11 @@ const statusStyles: Record<string, { bg: string; text: string; label: string }> 
     bg: 'bg-red-50 dark:bg-red-950/60',
     text: 'text-red-700 dark:text-red-300 border-red-300 dark:border-red-800',
     label: 'Overdue',
+  },
+  cancelled: {
+    bg: 'bg-zinc-100 dark:bg-zinc-800',
+    text: 'text-zinc-500 dark:text-zinc-400 border-zinc-300 dark:border-zinc-700 line-through',
+    label: 'Cancelled',
   },
   paid: {
     bg: 'bg-green-50 dark:bg-green-950/60',

@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   FileText,
   Printer,
-  CreditCard,
   Search,
   Filter,
   Calendar,
@@ -16,100 +15,78 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { CustomerInvoice } from '../types/invoice';
-import { MOCK_CUSTOMER_INVOICES } from '../lib/mockInvoices';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { Stepper } from '../components/shared/Stepper';
 import { Drawer } from '../components/shared/Drawer';
 import { useToast } from '../components/shared/Toast';
 import { formatCurrency, cn } from '../lib/utils';
-import { MockCheckoutModal } from '../components/invoices/MockCheckoutModal';
+import { errorMessage, invoicesApi, isInvoiceOverdue as isOverdue } from '../lib/billingApi';
+import { useDebounced } from '../lib/useDebounced';
 import { InvoicePrintView } from '../components/invoices/InvoicePrintView';
+
+const PAGE_SIZE = 5;
 
 export const InvoicesPage: React.FC = () => {
   const { toast } = useToast();
-  const [invoices, setInvoices] = useState<CustomerInvoice[]>(MOCK_CUSTOMER_INVOICES);
+  // The API only returns the logged-in customer's own (non-draft) invoices.
+  const [invoices, setInvoices] = useState<CustomerInvoice[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<number | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<CustomerInvoice | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const debouncedSearch = useDebounced(searchQuery);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const pageSize = 5;
 
-  // Checkout Modal State
-  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
-  const [payingInvoice, setPayingInvoice] = useState<CustomerInvoice | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    invoicesApi
+      .list({
+        page: currentPage,
+        page_size: PAGE_SIZE,
+        search: debouncedSearch.trim() || undefined,
+        status: statusFilter === 'all' || statusFilter === 'overdue' ? undefined : statusFilter,
+        overdue: statusFilter === 'overdue' ? 'true' : undefined,
+      })
+      .then((p) => {
+        if (cancelled) return;
+        setInvoices(p.items);
+        setTotalCount(p.total);
+      })
+      .catch((err) => !cancelled && toast({ type: 'error', title: 'Could not load invoices', message: errorMessage(err) }))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPage, debouncedSearch, statusFilter, toast]);
 
-  // Today reference date for overdue check
-  const todayStr = '2026-10-31';
-
-  const isOverdue = (invoice: CustomerInvoice) => {
-    return (
-      invoice.status !== 'paid' &&
-      invoice.amount_due > 0 &&
-      invoice.due_date < todayStr
-    );
-  };
-
-  // Filter invoices
-  const filteredInvoices = invoices.filter((inv) => {
-    const overdue = isOverdue(inv);
-    let matchesStatus = true;
-    if (statusFilter === 'overdue') {
-      matchesStatus = overdue;
-    } else if (statusFilter !== 'all') {
-      matchesStatus = inv.status.toLowerCase() === statusFilter.toLowerCase();
+  useEffect(() => {
+    if (selectedInvoiceId === null) {
+      setSelectedInvoice(null);
+      return;
     }
+    let cancelled = false;
+    setSelectedInvoice(null);
+    invoicesApi
+      .get(selectedInvoiceId)
+      .then((inv) => !cancelled && setSelectedInvoice(inv))
+      .catch((err) => {
+        if (cancelled) return;
+        toast({ type: 'error', title: 'Could not load invoice', message: errorMessage(err) });
+        setSelectedInvoiceId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedInvoiceId, toast]);
 
-    const matchesSearch =
-      inv.number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      inv.customer_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (inv.subscription_number &&
-        inv.subscription_number.toLowerCase().includes(searchQuery.toLowerCase()));
-
-    return matchesStatus && matchesSearch;
-  });
-
-  // Pagination calculation
-  const totalCount = filteredInvoices.length;
-  const totalPages = Math.ceil(totalCount / pageSize) || 1;
-  const paginatedInvoices = filteredInvoices.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
-
-  const selectedInvoice = invoices.find((inv) => inv.id === selectedInvoiceId) || null;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const paginatedInvoices = invoices;
 
   const handlePrint = () => {
     window.print();
-  };
-
-  const handleOpenCheckout = (invoice: CustomerInvoice) => {
-    setPayingInvoice(invoice);
-    setIsCheckoutOpen(true);
-  };
-
-  const handlePaymentSuccess = (invoiceId: number, paidAmount: number) => {
-    setInvoices((prev) =>
-      prev.map((inv) => {
-        if (inv.id === invoiceId) {
-          const newPaid = inv.amount_paid + paidAmount;
-          const newDue = Math.max(0, inv.total - newPaid);
-          const newStatus = newDue <= 0 ? 'paid' : inv.status;
-          return {
-            ...inv,
-            amount_paid: newPaid,
-            amount_due: newDue,
-            status: newStatus,
-          };
-        }
-        return inv;
-      })
-    );
-
-    toast({
-      type: 'success',
-      title: 'Payment Successful',
-      message: `Payment of ${formatCurrency(paidAmount)} processed. Invoice status updated.`,
-    });
   };
 
   return (
@@ -121,7 +98,7 @@ export const InvoicesPage: React.FC = () => {
             Invoices
           </h1>
           <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
-            View your billing history, download tax invoices, and complete pending payments.
+            View your billing history, print tax invoices, and check what is still due.
           </p>
         </div>
       </div>
@@ -149,7 +126,7 @@ export const InvoicesPage: React.FC = () => {
             { id: 'confirmed', label: 'Unpaid / Confirmed' },
             { id: 'paid', label: 'Paid' },
             { id: 'overdue', label: 'Overdue' },
-            { id: 'draft', label: 'Draft' },
+            { id: 'cancelled', label: 'Cancelled' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -172,7 +149,9 @@ export const InvoicesPage: React.FC = () => {
 
       {/* Invoices List / Cards */}
       <div className="grid grid-cols-1 gap-3">
-        {paginatedInvoices.length === 0 ? (
+        {loading && invoices.length === 0 ? (
+          <div className="py-12 text-center text-xs text-muted-foreground">Loading invoices...</div>
+        ) : paginatedInvoices.length === 0 ? (
           <div className="py-12 text-center border border-dashed rounded-xl border-border bg-card">
             <Receipt className="w-10 h-10 mx-auto text-muted-foreground/40 mb-3" />
             <p className="text-sm font-semibold text-foreground">No invoices found</p>
@@ -254,20 +233,6 @@ export const InvoicesPage: React.FC = () => {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {inv.amount_due > 0 && inv.status !== 'draft' && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleOpenCheckout(inv);
-                          }}
-                          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-colors flex items-center gap-1"
-                        >
-                          <CreditCard className="w-3.5 h-3.5" />
-                          <span>Pay Now</span>
-                        </button>
-                      )}
-
                       <button
                         type="button"
                         onClick={(e) => {
@@ -292,8 +257,8 @@ export const InvoicesPage: React.FC = () => {
       {totalPages > 1 && (
         <div className="flex items-center justify-between pt-2">
           <p className="text-xs text-muted-foreground">
-            Showing {(currentPage - 1) * pageSize + 1} to{' '}
-            {Math.min(currentPage * pageSize, totalCount)} of {totalCount} invoices
+            Showing {(currentPage - 1) * PAGE_SIZE + 1} to{' '}
+            {Math.min(currentPage * PAGE_SIZE, totalCount)} of {totalCount} invoices
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -308,7 +273,7 @@ export const InvoicesPage: React.FC = () => {
             </span>
             <button
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              disabled={currentPage === totalPages}
+              disabled={currentPage >= totalPages}
               className="p-1.5 rounded-md border border-border bg-card text-foreground disabled:opacity-40 hover:bg-muted transition-colors"
             >
               <ChevronRight className="w-4 h-4" />
@@ -324,7 +289,7 @@ export const InvoicesPage: React.FC = () => {
         title={selectedInvoice ? `Invoice ${selectedInvoice.number}` : 'Invoice Detail'}
         description={
           selectedInvoice
-            ? `Issued on ${selectedInvoice.issue_date} &bull; Due on ${selectedInvoice.due_date}`
+            ? `Issued on ${selectedInvoice.issue_date} • Due on ${selectedInvoice.due_date}`
             : undefined
         }
         footer={
@@ -339,19 +304,16 @@ export const InvoicesPage: React.FC = () => {
                 <span>Print Invoice</span>
               </button>
 
-              {selectedInvoice.amount_due > 0 && selectedInvoice.status !== 'draft' ? (
-                <button
-                  type="button"
-                  onClick={() => handleOpenCheckout(selectedInvoice)}
-                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center gap-1.5 transition-all active:scale-95"
-                >
-                  <CreditCard className="w-4 h-4" />
-                  <span>Pay Now ({formatCurrency(selectedInvoice.amount_due)})</span>
-                </button>
-              ) : selectedInvoice.status === 'paid' ? (
+              {selectedInvoice.status === 'paid' ? (
                 <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
                   <CheckCircle2 className="w-4 h-4" />
                   <span>Paid in Full</span>
+                </div>
+              ) : selectedInvoice.amount_due > 0 && selectedInvoice.status === 'confirmed' ? (
+                <div className="text-xs text-muted-foreground text-right">
+                  Balance due <span className="font-semibold text-foreground">{formatCurrency(selectedInvoice.amount_due)}</span>
+                  <br />
+                  Please pay by bank transfer quoting {selectedInvoice.number}.
                 </div>
               ) : null}
             </div>
@@ -373,13 +335,13 @@ export const InvoicesPage: React.FC = () => {
                 )}
               </div>
               <Stepper
-                steps={['Draft', 'Confirmed', 'Paid']}
+                steps={selectedInvoice.status === 'cancelled' ? ['Confirmed', 'Cancelled'] : ['Confirmed', 'Paid']}
                 currentStep={
-                  selectedInvoice.status === 'draft'
-                    ? 'Draft'
-                    : selectedInvoice.status === 'confirmed'
-                    ? 'Confirmed'
-                    : 'Paid'
+                  selectedInvoice.status === 'cancelled'
+                    ? 'Cancelled'
+                    : selectedInvoice.status === 'paid'
+                    ? 'Paid'
+                    : 'Confirmed'
                 }
               />
             </div>
@@ -488,14 +450,6 @@ export const InvoicesPage: React.FC = () => {
           </div>
         )}
       </Drawer>
-
-      {/* Pay Now Mock Checkout Modal */}
-      <MockCheckoutModal
-        isOpen={isCheckoutOpen}
-        onClose={() => setIsCheckoutOpen(false)}
-        invoice={payingInvoice}
-        onPaymentSuccess={handlePaymentSuccess}
-      />
 
       {/* Hidden Printable Invoice for native window.print() */}
       {selectedInvoice && <InvoicePrintView invoice={selectedInvoice} />}

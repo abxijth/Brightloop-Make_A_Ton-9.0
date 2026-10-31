@@ -1,166 +1,87 @@
-import { useState, useMemo } from 'react';
-import {
-  Search,
-  Filter,
-  Receipt,
-} from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Search, Filter, Receipt, Plus } from 'lucide-react';
 import { formatCurrency, cn } from '../lib/utils';
+import { errorMessage, paymentsApi } from '../lib/billingApi';
+import { useDebounced } from '../lib/useDebounced';
+import { useToast } from '../components/shared/Toast';
+import { RecordPaymentDrawer } from '../components/invoices/RecordPaymentDrawer';
+import type { PaymentRecord } from '../types/invoice';
 
-interface PaymentRecord {
-  id: number;
-  invoice_id: number;
-  invoice_number: string;
-  customer_id: number;
-  customer_name: string;
-  customer_email: string;
-  method: 'bank_transfer' | 'card' | 'online' | 'cash';
-  amount: number;
-  payment_date: string;
-  note?: string;
-  status: 'completed';
-}
+const PAGE_SIZE = 10;
 
-const MOCK_PAYMENTS: PaymentRecord[] = [
-  {
-    id: 901,
-    invoice_id: 480,
-    invoice_number: 'INV-0089',
-    customer_id: 101,
-    customer_name: 'Acme Technologies Pvt Ltd',
-    customer_email: 'billing@acmetech.io',
-    method: 'bank_transfer',
-    amount: 38348.82,
-    payment_date: '2026-09-28',
-    note: 'NEFT Transaction REF-9831049281',
-    status: 'completed',
-  },
-  {
-    id: 902,
-    invoice_id: 512,
-    invoice_number: 'INV-0112',
-    customer_id: 101,
-    customer_name: 'Acme Technologies Pvt Ltd',
-    customer_email: 'billing@acmetech.io',
-    method: 'card',
-    amount: 5898.82,
-    payment_date: '2026-10-05',
-    note: 'Online Gateway: VISA ending 4242',
-    status: 'completed',
-  },
-  {
-    id: 903,
-    invoice_id: 520,
-    invoice_number: 'INV-0120',
-    customer_id: 101,
-    customer_name: 'Acme Technologies Pvt Ltd',
-    customer_email: 'billing@acmetech.io',
-    method: 'bank_transfer',
-    amount: 1500.0,
-    payment_date: '2026-10-26',
-    note: 'Advance installment UTR-09418290',
-    status: 'completed',
-  },
-  {
-    id: 904,
-    invoice_id: 450,
-    invoice_number: 'INV-0062',
-    customer_id: 101,
-    customer_name: 'Acme Technologies Pvt Ltd',
-    customer_email: 'billing@acmetech.io',
-    method: 'online',
-    amount: 37168.82,
-    payment_date: '2026-08-25',
-    note: 'Portal Mock Checkout Settlement',
-    status: 'completed',
-  },
-];
+const METHOD_LABELS: Record<string, string> = {
+  bank_transfer: 'Bank Transfer (NEFT/RTGS)',
+  card: 'Credit / Debit Card',
+  online: 'Online',
+  cash: 'Cash / Cheque',
+  other: 'Other',
+};
 
 export function PaymentsPage() {
-  const [payments] = useState<PaymentRecord[]>(MOCK_PAYMENTS);
+  const { toast } = useToast();
+  const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [amountTotal, setAmountTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearch = useDebounced(searchQuery);
   const [methodFilter, setMethodFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 10;
+  const [isRecordOpen, setIsRecordOpen] = useState(false);
 
-  const filteredPayments = useMemo(() => {
-    return payments.filter((p) => {
-      const matchesMethod = methodFilter === 'all' || p.method === methodFilter;
-      const query = searchQuery.toLowerCase().trim();
-      const matchesSearch =
-        !query ||
-        p.invoice_number.toLowerCase().includes(query) ||
-        p.customer_name.toLowerCase().includes(query) ||
-        (p.note && p.note.toLowerCase().includes(query));
-      return matchesMethod && matchesSearch;
-    });
-  }, [payments, searchQuery, methodFilter]);
+  const load = useCallback(() => {
+    setLoading(true);
+    paymentsApi
+      .list({
+        page: currentPage,
+        page_size: PAGE_SIZE,
+        search: debouncedSearch.trim() || undefined,
+        method: methodFilter === 'all' ? undefined : methodFilter,
+      })
+      .then((p) => {
+        setPayments(p.items);
+        setTotalCount(p.total);
+        setAmountTotal(p.amount_total);
+      })
+      .catch((err) => toast({ type: 'error', title: 'Could not load payments', message: errorMessage(err) }))
+      .finally(() => setLoading(false));
+  }, [currentPage, debouncedSearch, methodFilter, toast]);
 
-  const totalCollected = useMemo(() => payments.reduce((acc, p) => acc + p.amount, 0), [payments]);
-  const totalCount = filteredPayments.length;
-  const totalPages = Math.ceil(totalCount / pageSize) || 1;
-  const paginated = filteredPayments.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  useEffect(load, [load]);
 
-  const getMethodBadge = (method: string) => {
-    switch (method) {
-      case 'bank_transfer':
-        return 'Bank Transfer (NEFT/RTGS)';
-      case 'card':
-        return 'Credit / Debit Card';
-      case 'online':
-        return 'Online Gateway';
-      case 'cash':
-        return 'Cash / Cheque';
-      default:
-        return method;
-    }
-  };
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const firstRow = totalCount === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-border">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
-            Payments Ledger
-          </h1>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">Payments Ledger</h1>
           <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
-            Audit trail of all customer settlements, gateway transactions, and manual receipts.
+            Every payment recorded against an invoice, with its method, date and reference note.
           </p>
         </div>
+        <button
+          onClick={() => setIsRecordOpen(true)}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold shadow-xs hover:bg-primary/90 transition-all self-start sm:self-auto"
+        >
+          <Plus className="w-4 h-4" />
+          <span>Record Payment</span>
+        </button>
       </div>
 
       {/* Summary KPI */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="p-4 rounded-xl border border-border bg-card shadow-xs">
-          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Total Settled Volume
-          </span>
-          <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
-            {formatCurrency(totalCollected)}
-          </div>
-          <span className="text-[11px] text-muted-foreground mt-0.5 block">
-            Across {payments.length} transactions
-          </span>
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Collected</span>
+          <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">{formatCurrency(amountTotal)}</div>
+          <span className="text-[11px] text-muted-foreground mt-0.5 block">Matching the current filters</span>
         </div>
-
         <div className="p-4 rounded-xl border border-border bg-card shadow-xs">
-          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Active Payment Gateways
-          </span>
-          <div className="text-xl font-bold text-foreground mt-1">4 Methods</div>
-          <span className="text-[11px] text-muted-foreground mt-0.5 block">
-            NEFT, Card, Online, Cheque
-          </span>
-        </div>
-
-        <div className="p-4 rounded-xl border border-border bg-card shadow-xs">
-          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Reconciliation Rate
-          </span>
-          <div className="text-xl font-bold text-foreground mt-1">100%</div>
-          <span className="text-[11px] text-muted-foreground mt-0.5 block">
-            All records tied to invoices
-          </span>
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Transactions</span>
+          <div className="text-xl font-bold text-foreground mt-1">{totalCount.toLocaleString('en-IN')}</div>
+          <span className="text-[11px] text-muted-foreground mt-0.5 block">All tied to an invoice</span>
         </div>
       </div>
 
@@ -187,6 +108,7 @@ export function PaymentsPage() {
             { id: 'bank_transfer', label: 'Bank Transfer' },
             { id: 'card', label: 'Card' },
             { id: 'online', label: 'Online' },
+            { id: 'cash', label: 'Cash' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -223,7 +145,11 @@ export function PaymentsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {paginated.length === 0 ? (
+              {loading && payments.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-muted-foreground">Loading payments...</td>
+                </tr>
+              ) : payments.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-12 text-center text-muted-foreground">
                     <Receipt className="w-8 h-8 mx-auto text-muted-foreground/30 mb-2" />
@@ -231,27 +157,18 @@ export function PaymentsPage() {
                   </td>
                 </tr>
               ) : (
-                paginated.map((p) => (
-                  <tr key={p.id} className="hover:bg-muted/20 transition-colors">
-                    <td className="py-3 px-4 font-mono font-semibold text-foreground">
-                      REC-{p.id}
-                    </td>
-                    <td className="py-3 px-4 font-semibold text-foreground">
-                      {p.invoice_number}
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="font-medium text-foreground">{p.customer_name}</div>
-                      <div className="text-[11px] text-muted-foreground">{p.customer_email}</div>
-                    </td>
+                payments.map((p) => (
+                  <tr key={p.id} className={cn('hover:bg-muted/20 transition-colors', loading && 'opacity-60')}>
+                    <td className="py-3 px-4 font-mono font-semibold text-foreground">REC-{p.id}</td>
+                    <td className="py-3 px-4 font-semibold text-foreground">{p.invoice_number ?? '—'}</td>
+                    <td className="py-3 px-4 font-medium text-foreground">{p.customer_name ?? '—'}</td>
                     <td className="py-3 px-4">
                       <span className="text-[11px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                        {getMethodBadge(p.method)}
+                        {METHOD_LABELS[p.method] ?? p.method}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-muted-foreground">{p.payment_date}</td>
-                    <td className="py-3 px-4 text-muted-foreground font-mono text-[11px]">
-                      {p.note || '-'}
-                    </td>
+                    <td className="py-3 px-4 text-muted-foreground font-mono text-[11px]">{p.note || '-'}</td>
                     <td className="py-3 px-4 text-right font-bold text-emerald-600 dark:text-emerald-400">
                       {formatCurrency(p.amount)}
                     </td>
@@ -265,8 +182,7 @@ export function PaymentsPage() {
         {/* Footer */}
         <div className="p-3 border-t border-border bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground">
           <span>
-            Showing {(currentPage - 1) * pageSize + 1} to{' '}
-            {Math.min(currentPage * pageSize, totalCount)} of {totalCount} payment transactions
+            Showing {firstRow} to {Math.min(currentPage * PAGE_SIZE, totalCount)} of {totalCount} payment transactions
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -281,7 +197,7 @@ export function PaymentsPage() {
             </span>
             <button
               onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-              disabled={currentPage === totalPages}
+              disabled={currentPage >= totalPages}
               className="px-2.5 py-1 rounded-md border border-border bg-card text-foreground disabled:opacity-40 hover:bg-muted"
             >
               Next
@@ -289,6 +205,8 @@ export function PaymentsPage() {
           </div>
         </div>
       </div>
+
+      <RecordPaymentDrawer isOpen={isRecordOpen} onClose={() => setIsRecordOpen(false)} onRecorded={load} />
     </div>
   );
 }

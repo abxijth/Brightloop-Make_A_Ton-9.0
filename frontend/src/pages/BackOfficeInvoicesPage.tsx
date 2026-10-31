@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Search,
   Filter,
@@ -14,195 +14,162 @@ import {
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { Stepper } from '../components/shared/Stepper';
 import { Drawer } from '../components/shared/Drawer';
+import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { useToast } from '../components/shared/Toast';
 import { formatCurrency, cn } from '../lib/utils';
 import { CustomerInvoice } from '../types/invoice';
-import { MOCK_CUSTOMER_INVOICES } from '../lib/mockInvoices';
+import { errorMessage, invoicesApi, isInvoiceOverdue as isOverdue, reportsApi } from '../lib/billingApi';
+import { useDebounced } from '../lib/useDebounced';
 import { InvoicePrintView } from '../components/invoices/InvoicePrintView';
+import { RecordPaymentDrawer } from '../components/invoices/RecordPaymentDrawer';
+
+const PAGE_SIZE = 10;
 
 export function BackOfficeInvoicesPage() {
   const { toast } = useToast();
 
-  const [invoices, setInvoices] = useState<CustomerInvoice[]>(MOCK_CUSTOMER_INVOICES);
+  const [invoices, setInvoices] = useState<CustomerInvoice[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<number | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<CustomerInvoice | null>(null);
+  const [stats, setStats] = useState({ outstanding: 0, outstandingCount: 0, overdueCount: 0, overdueAmount: 0 });
 
-  // Filters & pagination
+  // Filters & pagination (server-side)
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearch = useDebounced(searchQuery);
   const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 10;
 
   // Actions state
-  const [isConfirmingDraft, setIsConfirmingDraft] = useState(false);
+  const [busyAction, setBusyAction] = useState<null | 'confirm' | 'cancel' | 'send'>(null);
+  const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [isRecordPaymentOpen, setIsRecordPaymentOpen] = useState(false);
-  const [paymentAmount, setPaymentAmount] = useState<number>(0);
-  const [paymentMethod, setPaymentMethod] = useState<'bank_transfer' | 'card' | 'cash' | 'online'>('bank_transfer');
-  const [paymentNote, setPaymentNote] = useState('');
-  const [isRecordingPayment, setIsRecordingPayment] = useState(false);
 
-  const selectedInvoice = invoices.find((inv) => inv.id === selectedInvoiceId) || null;
+  const loadList = useCallback(() => {
+    setLoading(true);
+    invoicesApi
+      .list({
+        page: currentPage,
+        page_size: PAGE_SIZE,
+        search: debouncedSearch.trim() || undefined,
+        status: statusFilter === 'all' || statusFilter === 'overdue' ? undefined : statusFilter,
+        overdue: statusFilter === 'overdue' ? 'true' : undefined,
+      })
+      .then((p) => {
+        setInvoices(p.items);
+        setTotalCount(p.total);
+      })
+      .catch((err) => toast({ type: 'error', title: 'Could not load invoices', message: errorMessage(err) }))
+      .finally(() => setLoading(false));
+  }, [currentPage, debouncedSearch, statusFilter, toast]);
 
-  // Today reference date for overdue calculations
-  const todayStr = '2026-10-31';
-  const isOverdue = (inv: CustomerInvoice) => {
-    return inv.status !== 'paid' && inv.amount_due > 0 && inv.due_date < todayStr;
+  const loadStats = useCallback(() => {
+    reportsApi
+      .summary()
+      .then((s) =>
+        setStats({
+          outstanding: s.outstanding_amount,
+          outstandingCount: s.outstanding_count,
+          overdueCount: s.overdue_count,
+          overdueAmount: s.overdue_amount,
+        })
+      )
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(loadList, [loadList]);
+  useEffect(loadStats, [loadStats]);
+
+  // Load full invoice (with lines) whenever one is selected.
+  useEffect(() => {
+    if (selectedInvoiceId === null) {
+      setSelectedInvoice(null);
+      return;
+    }
+    let cancelled = false;
+    setSelectedInvoice((cur) => (cur?.id === selectedInvoiceId ? cur : null));
+    invoicesApi
+      .get(selectedInvoiceId)
+      .then((inv) => !cancelled && setSelectedInvoice(inv))
+      .catch((err) => {
+        if (cancelled) return;
+        toast({ type: 'error', title: 'Could not load invoice', message: errorMessage(err) });
+        setSelectedInvoiceId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedInvoiceId, toast]);
+
+  const refreshAfterChange = (updated?: CustomerInvoice) => {
+    if (updated) setSelectedInvoice(updated);
+    else if (selectedInvoiceId !== null) invoicesApi.get(selectedInvoiceId).then(setSelectedInvoice).catch(() => undefined);
+    loadList();
+    loadStats();
   };
 
-  // Filtered & Searched data
-  const filteredInvoices = useMemo(() => {
-    return invoices.filter((inv) => {
-      const overdue = isOverdue(inv);
-      let matchesStatus = true;
-      if (statusFilter === 'overdue') {
-        matchesStatus = overdue;
-      } else if (statusFilter !== 'all') {
-        matchesStatus = inv.status.toLowerCase() === statusFilter.toLowerCase();
-      }
-
-      const query = searchQuery.toLowerCase().trim();
-      const matchesSearch =
-        !query ||
-        inv.number.toLowerCase().includes(query) ||
-        inv.customer_name.toLowerCase().includes(query) ||
-        inv.customer_email.toLowerCase().includes(query) ||
-        (inv.subscription_number && inv.subscription_number.toLowerCase().includes(query));
-
-      return matchesStatus && matchesSearch;
-    });
-  }, [invoices, searchQuery, statusFilter]);
-
-  const totalCount = filteredInvoices.length;
-  const totalPages = Math.ceil(totalCount / pageSize) || 1;
-  const paginatedInvoices = filteredInvoices.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const firstRow = totalCount === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
 
   // Status progression stepper step
   const getStepperIndex = (inv: CustomerInvoice) => {
     if (inv.status === 'draft') return 'Draft';
     if (inv.status === 'confirmed') return 'Confirmed';
+    if (inv.status === 'cancelled') return 'Cancelled';
     return 'Paid';
   };
 
   // Handlers
-  const handleConfirmDraft = () => {
+  const handleConfirmDraft = async () => {
     if (!selectedInvoice) return;
-    setIsConfirmingDraft(true);
-    setTimeout(() => {
-      setInvoices((prev) =>
-        prev.map((inv) =>
-          inv.id === selectedInvoice.id
-            ? { ...inv, status: 'confirmed' }
-            : inv
-        )
-      );
-      setIsConfirmingDraft(false);
+    setBusyAction('confirm');
+    try {
+      const updated = await invoicesApi.confirm(selectedInvoice.id);
+      toast({ type: 'success', title: 'Invoice Confirmed', message: `Invoice ${updated.number} is now confirmed.` });
+      refreshAfterChange(updated);
+    } catch (err) {
+      toast({ type: 'error', title: 'Could not confirm invoice', message: errorMessage(err) });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleSendToOutbox = async () => {
+    if (!selectedInvoice) return;
+    setBusyAction('send');
+    try {
+      await invoicesApi.send(selectedInvoice.id);
       toast({
         type: 'success',
-        title: 'Invoice Confirmed',
-        message: `Invoice ${selectedInvoice.number} has been transitioned from Draft to Confirmed.`,
+        title: 'Invoice Sent',
+        message: `Invoice ${selectedInvoice.number} has been queued in the Outbox for ${selectedInvoice.customer_email}.`,
       });
-    }, 400);
-  };
-
-  const handleSendToOutbox = () => {
-    if (!selectedInvoice) return;
-    toast({
-      type: 'success',
-      title: 'Invoice Sent',
-      message: `Invoice ${selectedInvoice.number} has been queued into the Outbox for ${selectedInvoice.customer_email}.`,
-    });
-  };
-
-  const handleCancelInvoice = () => {
-    if (!selectedInvoice) return;
-    if (selectedInvoice.amount_paid > 0) {
-      toast({
-        type: 'error',
-        title: 'Cannot Cancel',
-        message: 'Cannot cancel an invoice with payments applied.',
-      });
-      return;
+    } catch (err) {
+      toast({ type: 'error', title: 'Could not send invoice', message: errorMessage(err) });
+    } finally {
+      setBusyAction(null);
     }
-    setInvoices((prev) =>
-      prev.map((inv) =>
-        inv.id === selectedInvoice.id ? { ...inv, status: 'draft', amount_due: 0 } : inv
-      )
-    );
-    toast({
-      type: 'info',
-      title: 'Invoice Cancelled',
-      message: `Invoice ${selectedInvoice.number} has been cancelled.`,
-    });
   };
 
-  const handleOpenRecordPayment = () => {
+  const handleCancelInvoice = async () => {
     if (!selectedInvoice) return;
-    setPaymentAmount(selectedInvoice.amount_due);
-    setPaymentMethod('bank_transfer');
-    setPaymentNote('');
-    setIsRecordPaymentOpen(true);
-  };
-
-  const handleRecordPaymentSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedInvoice) return;
-
-    if (paymentAmount <= 0) {
-      toast({
-        type: 'error',
-        title: 'Invalid Amount',
-        message: 'Payment amount must be greater than ₹0.',
-      });
-      return;
+    setBusyAction('cancel');
+    try {
+      const updated = await invoicesApi.cancel(selectedInvoice.id);
+      toast({ type: 'info', title: 'Invoice Cancelled', message: `Invoice ${updated.number} has been cancelled.` });
+      setIsCancelDialogOpen(false);
+      refreshAfterChange(updated);
+    } catch (err) {
+      toast({ type: 'error', title: 'Cannot Cancel', message: errorMessage(err) });
+    } finally {
+      setBusyAction(null);
     }
-
-    if (paymentAmount > selectedInvoice.amount_due) {
-      toast({
-        type: 'error',
-        title: 'Amount Exceeded',
-        message: `Amount cannot exceed balance due (${formatCurrency(selectedInvoice.amount_due)}).`,
-      });
-      return;
-    }
-
-    setIsRecordingPayment(true);
-    setTimeout(() => {
-      setInvoices((prev) =>
-        prev.map((inv) => {
-          if (inv.id === selectedInvoice.id) {
-            const newPaid = inv.amount_paid + paymentAmount;
-            const newDue = Math.max(0, inv.total - newPaid);
-            const newStatus = newDue <= 0 ? 'paid' : inv.status;
-            return {
-              ...inv,
-              amount_paid: newPaid,
-              amount_due: newDue,
-              status: newStatus,
-            };
-          }
-          return inv;
-        })
-      );
-      setIsRecordingPayment(false);
-      setIsRecordPaymentOpen(false);
-      toast({
-        type: 'success',
-        title: 'Payment Recorded',
-        message: `Payment of ${formatCurrency(paymentAmount)} recorded for invoice ${selectedInvoice.number}.`,
-      });
-    }, 500);
   };
 
   const handlePrint = () => {
     window.print();
   };
-
-  // Metrics overview
-  const totalBilled = useMemo(() => invoices.reduce((sum, inv) => sum + inv.total, 0), [invoices]);
-  const totalOutstanding = useMemo(() => invoices.reduce((sum, inv) => sum + inv.amount_due, 0), [invoices]);
-  const overdueCount = useMemo(() => invoices.filter(isOverdue).length, [invoices]);
 
   return (
     <div className="space-y-6">
@@ -222,13 +189,13 @@ export function BackOfficeInvoicesPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="p-4 rounded-xl border border-border bg-card shadow-xs">
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Total Invoiced
+            Matching Invoices
           </span>
           <div className="text-xl font-bold text-foreground mt-1">
-            {formatCurrency(totalBilled)}
+            {totalCount.toLocaleString('en-IN')}
           </div>
           <span className="text-[11px] text-muted-foreground mt-0.5 block">
-            Across {invoices.length} total invoices
+            For the current search and filter
           </span>
         </div>
 
@@ -237,10 +204,10 @@ export function BackOfficeInvoicesPage() {
             Outstanding Receivables
           </span>
           <div className="text-xl font-bold text-amber-600 dark:text-amber-400 mt-1">
-            {formatCurrency(totalOutstanding)}
+            {formatCurrency(stats.outstanding)}
           </div>
           <span className="text-[11px] text-muted-foreground mt-0.5 block">
-            Awaiting settlement
+            Across {stats.outstandingCount} confirmed invoices awaiting settlement
           </span>
         </div>
 
@@ -249,10 +216,10 @@ export function BackOfficeInvoicesPage() {
             Overdue Invoices
           </span>
           <div className="text-xl font-bold text-red-600 dark:text-red-400 mt-1">
-            {overdueCount}
+            {stats.overdueCount}
           </div>
           <span className="text-[11px] text-muted-foreground mt-0.5 block">
-            Require follow-up notice
+            {formatCurrency(stats.overdueAmount)} past due, needs follow-up
           </span>
         </div>
       </div>
@@ -280,6 +247,7 @@ export function BackOfficeInvoicesPage() {
             { id: 'draft', label: 'Draft' },
             { id: 'confirmed', label: 'Confirmed' },
             { id: 'paid', label: 'Paid' },
+            { id: 'cancelled', label: 'Cancelled' },
             { id: 'overdue', label: 'Overdue' },
           ].map((tab) => (
             <button
@@ -319,7 +287,13 @@ export function BackOfficeInvoicesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {paginatedInvoices.length === 0 ? (
+              {loading && invoices.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="py-12 text-center text-muted-foreground">
+                    Loading invoices...
+                  </td>
+                </tr>
+              ) : invoices.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="py-12 text-center text-muted-foreground">
                     <FileText className="w-8 h-8 mx-auto text-muted-foreground/30 mb-2" />
@@ -327,13 +301,13 @@ export function BackOfficeInvoicesPage() {
                   </td>
                 </tr>
               ) : (
-                paginatedInvoices.map((inv) => {
+                invoices.map((inv) => {
                   const overdue = isOverdue(inv);
                   return (
                     <tr
                       key={inv.id}
                       onClick={() => setSelectedInvoiceId(inv.id)}
-                      className="hover:bg-muted/30 cursor-pointer transition-colors"
+                      className={cn('hover:bg-muted/30 cursor-pointer transition-colors', loading && 'opacity-60')}
                     >
                       <td className="py-3 px-4 font-semibold text-foreground">
                         {inv.number}
@@ -399,8 +373,8 @@ export function BackOfficeInvoicesPage() {
         {/* Table Footer / Pagination */}
         <div className="p-3 border-t border-border bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground">
           <span>
-            Showing {(currentPage - 1) * pageSize + 1} to{' '}
-            {Math.min(currentPage * pageSize, totalCount)} of {totalCount} invoices
+            Showing {firstRow} to{' '}
+            {Math.min(currentPage * PAGE_SIZE, totalCount)} of {totalCount} invoices
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -415,7 +389,7 @@ export function BackOfficeInvoicesPage() {
             </span>
             <button
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              disabled={currentPage === totalPages}
+              disabled={currentPage >= totalPages}
               className="px-2.5 py-1 rounded-md border border-border bg-card text-foreground disabled:opacity-40 hover:bg-muted"
             >
               Next
@@ -434,7 +408,7 @@ export function BackOfficeInvoicesPage() {
         title={selectedInvoice ? `Invoice ${selectedInvoice.number}` : 'Invoice Details'}
         description={
           selectedInvoice
-            ? `Customer: ${selectedInvoice.customer_name} &bull; Period: ${selectedInvoice.period_start} to ${selectedInvoice.period_end}`
+            ? `Customer: ${selectedInvoice.customer_name} • Period: ${selectedInvoice.period_start} to ${selectedInvoice.period_end}`
             : undefined
         }
         footer={
@@ -450,20 +424,26 @@ export function BackOfficeInvoicesPage() {
               </button>
 
               <div className="flex items-center gap-2">
+                {selectedInvoice.status !== 'draft' && selectedInvoice.status !== 'cancelled' && (
                 <button
                   type="button"
                   onClick={handleSendToOutbox}
+                  disabled={busyAction !== null}
                   className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-border bg-card hover:bg-muted text-foreground flex items-center gap-1.5 transition-colors"
                   title="Send email notification"
                 >
                   <Send className="w-3.5 h-3.5 text-blue-500" />
-                  <span>Send</span>
+                  <span>{busyAction === 'send' ? 'Sending...' : 'Send'}</span>
                 </button>
+                )}
 
-                {selectedInvoice.status !== 'paid' && selectedInvoice.amount_paid === 0 && (
+                {selectedInvoice.status !== 'paid' &&
+                  selectedInvoice.status !== 'cancelled' &&
+                  selectedInvoice.amount_paid === 0 && (
                   <button
                     type="button"
-                    onClick={handleCancelInvoice}
+                    onClick={() => setIsCancelDialogOpen(true)}
+                    disabled={busyAction !== null}
                     className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-red-200 dark:border-red-900/60 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600 dark:text-red-400 flex items-center gap-1 transition-colors"
                   >
                     <XCircle className="w-3.5 h-3.5" />
@@ -475,7 +455,7 @@ export function BackOfficeInvoicesPage() {
                   <button
                     type="button"
                     onClick={handleConfirmDraft}
-                    disabled={isConfirmingDraft}
+                    disabled={busyAction !== null}
                     className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
                   >
                     <Check className="w-3.5 h-3.5" />
@@ -483,10 +463,10 @@ export function BackOfficeInvoicesPage() {
                   </button>
                 )}
 
-                {selectedInvoice.status !== 'draft' && selectedInvoice.amount_due > 0 && (
+                {selectedInvoice.status === 'confirmed' && selectedInvoice.amount_due > 0 && (
                   <button
                     type="button"
-                    onClick={handleOpenRecordPayment}
+                    onClick={() => setIsRecordPaymentOpen(true)}
                     className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center gap-1.5 transition-colors"
                   >
                     <CreditCard className="w-3.5 h-3.5" />
@@ -513,7 +493,7 @@ export function BackOfficeInvoicesPage() {
                 )}
               </div>
               <Stepper
-                steps={['Draft', 'Confirmed', 'Paid']}
+                steps={selectedInvoice.status === 'cancelled' ? ['Draft', 'Cancelled'] : ['Draft', 'Confirmed', 'Paid']}
                 currentStep={getStepperIndex(selectedInvoice)}
               />
             </div>
@@ -528,88 +508,12 @@ export function BackOfficeInvoicesPage() {
                 <button
                   type="button"
                   onClick={handleConfirmDraft}
-                  disabled={isConfirmingDraft}
+                  disabled={busyAction !== null}
                   className="px-3 py-1.5 bg-primary text-primary-foreground font-semibold rounded-md shadow-xs shrink-0"
                 >
                   Confirm Now
                 </button>
               </div>
-            )}
-
-            {/* Record Manual Payment Form in Drawer */}
-            {isRecordPaymentOpen && (
-              <form
-                onSubmit={handleRecordPaymentSubmit}
-                className="p-4 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20 space-y-3 text-xs"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
-                    <CreditCard className="w-4 h-4" /> Record Customer Payment
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setIsRecordPaymentOpen(false)}
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    Cancel
-                  </button>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-foreground block mb-1">
-                    Payment Amount (₹)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="1"
-                    max={selectedInvoice.amount_due}
-                    value={paymentAmount}
-                    onChange={(e) => setPaymentAmount(parseFloat(e.target.value) || 0)}
-                    className="w-full px-3 py-1.5 rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary font-semibold text-sm"
-                  />
-                  <span className="text-[10px] text-muted-foreground mt-0.5 block">
-                    Outstanding balance: {formatCurrency(selectedInvoice.amount_due)}
-                  </span>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-foreground block mb-1">
-                    Payment Method
-                  </label>
-                  <select
-                    value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value as any)}
-                    className="w-full px-3 py-1.5 rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
-                  >
-                    <option value="bank_transfer">Bank Transfer (NEFT / RTGS)</option>
-                    <option value="card">Credit / Debit Card</option>
-                    <option value="online">Online Payment Gateway</option>
-                    <option value="cash">Cash / Cheque</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-foreground block mb-1">
-                    Reference Note / Transaction ID
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. UTR-90238129, Bank reference"
-                    value={paymentNote}
-                    onChange={(e) => setPaymentNote(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isRecordingPayment}
-                  className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-colors disabled:opacity-50"
-                >
-                  {isRecordingPayment ? 'Recording...' : `Record Payment of ${formatCurrency(paymentAmount)}`}
-                </button>
-              </form>
             )}
 
             {/* Line items table */}
@@ -692,6 +596,27 @@ export function BackOfficeInvoicesPage() {
               </div>
             </div>
 
+            {/* Payments applied */}
+            {selectedInvoice.payments.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Payments</h4>
+                <div className="border border-border rounded-xl divide-y divide-border bg-card">
+                  {selectedInvoice.payments.map((p) => (
+                    <div key={p.id} className="p-3 text-xs flex justify-between">
+                      <div>
+                        <div className="font-medium text-foreground capitalize">{p.method.replace('_', ' ')}</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {p.payment_date}
+                          {p.note ? ` • ${p.note}` : ''}
+                        </div>
+                      </div>
+                      <div className="font-semibold text-emerald-600 dark:text-emerald-400">{formatCurrency(p.amount)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Customer & Period Metadata */}
             <div className="p-3.5 rounded-xl border border-border bg-card space-y-2 text-xs text-muted-foreground">
               <div className="flex justify-between">
@@ -724,6 +649,24 @@ export function BackOfficeInvoicesPage() {
           </div>
         )}
       </Drawer>
+
+      <RecordPaymentDrawer
+        isOpen={isRecordPaymentOpen}
+        invoice={selectedInvoice}
+        onClose={() => setIsRecordPaymentOpen(false)}
+        onRecorded={() => refreshAfterChange()}
+      />
+
+      <ConfirmDialog
+        isOpen={isCancelDialogOpen}
+        onCancel={() => setIsCancelDialogOpen(false)}
+        onConfirm={handleCancelInvoice}
+        isLoading={busyAction === 'cancel'}
+        title="Cancel Invoice?"
+        description={`Cancelling ${selectedInvoice?.number ?? 'this invoice'} voids it. Invoices with payments cannot be cancelled.`}
+        confirmLabel="Yes, Cancel Invoice"
+        isDestructive={true}
+      />
 
       {/* Hidden Print Invoice View for native browser printing */}
       {selectedInvoice && <InvoicePrintView invoice={selectedInvoice} />}

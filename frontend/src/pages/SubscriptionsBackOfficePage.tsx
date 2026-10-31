@@ -1,237 +1,113 @@
-import React, { useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import {
-  Search,
-  Plus,
-  Eye,
-  Printer,
-  ChevronRight,
-  Sparkles,
-  X,
-} from 'lucide-react';
+import { Search, Plus, Eye, Printer, ChevronRight, Pencil } from 'lucide-react';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { Stepper } from '../components/shared/Stepper';
 import { Drawer } from '../components/shared/Drawer';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { useToast } from '../components/shared/Toast';
-import { MOCK_SUBSCRIPTIONS } from '../lib/mockSubscriptions';
+import { SubscriptionFormDrawer } from '../components/subscriptions/SubscriptionFormDrawer';
+import { errorMessage, subscriptionsApi } from '../lib/billingApi';
+import { useDebounced } from '../lib/useDebounced';
 import { SubscriptionDetail, SubscriptionStatus } from '../types/subscription';
-import { cn } from '../lib/utils';
+import { cn, formatCurrency } from '../lib/utils';
 
 const STEPS = ['Draft', 'Quotation', 'Confirmed', 'Active', 'Closed'];
+const PAGE_SIZE = 15;
+const EDITABLE: SubscriptionStatus[] = ['draft', 'quotation', 'confirmed'];
 
-interface QuotationTemplate {
-  id: string;
-  name: string;
-  description: string;
-  planName: string;
-  defaultPrice: number;
-  validDays: number;
-  lines: Array<{
-    productName: string;
-    variantName?: string;
-    quantity: number;
-    unitPrice: number;
-  }>;
-}
-
-const SEEDED_TEMPLATES: QuotationTemplate[] = [
-  {
-    id: 'tmpl-1',
-    name: 'Enterprise Cloud Pro Template',
-    description: 'High-availability compute cluster with automated backup snapshots.',
-    planName: 'Enterprise Cloud Pro',
-    defaultPrice: 32499,
-    validDays: 30,
-    lines: [
-      {
-        productName: 'Dedicated Cloud Core Instance',
-        variantName: 'Compute: 16 vCPU, 64GB RAM',
-        quantity: 1,
-        unitPrice: 24999,
-      },
-      {
-        productName: 'Automated Snapshot & Backup Vault',
-        quantity: 3,
-        unitPrice: 2500,
-      },
-    ],
-  },
-  {
-    id: 'tmpl-2',
-    name: 'Developer Startup Bundle',
-    description: 'Quick-start developer sandbox environment with standard telemetry.',
-    planName: 'Developer Sandbox Tier',
-    defaultPrice: 4999,
-    validDays: 15,
-    lines: [
-      {
-        productName: 'Shared Multi-tenant Cluster',
-        quantity: 1,
-        unitPrice: 4999,
-      },
-    ],
-  },
-  {
-    id: 'tmpl-blank',
-    name: 'Blank Subscription',
-    description: 'Build a custom quotation from scratch with arbitrary line items.',
-    planName: 'Custom Agreement',
-    defaultPrice: 0,
-    validDays: 30,
-    lines: [],
-  },
-];
+const TRANSITION_LABELS: Partial<Record<SubscriptionStatus, string>> = {
+  quotation: 'Send Quotation',
+  confirmed: 'Confirm Subscription',
+  active: 'Activate Subscription',
+};
 
 export const SubscriptionsBackOfficePage: React.FC = () => {
   const [searchParams] = useSearchParams();
-  const initialStatusFilter = searchParams.get('status') || 'all';
-
   const { toast } = useToast();
 
-  const [subscriptions, setSubscriptions] = useState<SubscriptionDetail[]>(MOCK_SUBSCRIPTIONS);
+  const [subscriptions, setSubscriptions] = useState<SubscriptionDetail[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter);
+  const debouncedSearch = useDebounced(searchQuery);
+  const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') || 'all');
+  const [currentPage, setCurrentPage] = useState(1);
 
-  // Selected subscription for detail view / drawer
   const [selectedSub, setSelectedSub] = useState<SubscriptionDetail | null>(null);
-
-  // Template picker dialog
-  const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false);
-
-  // Close subscription confirmation dialog
+  const [formState, setFormState] = useState<{ open: boolean; editing: SubscriptionDetail | null }>({ open: false, editing: null });
   const [isCloseDialogOpen, setIsCloseDialogOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  // Filtered subscriptions
-  const filteredSubscriptions = useMemo(() => {
-    return subscriptions.filter((sub) => {
-      const matchesSearch =
-        sub.number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (sub.customer_name && sub.customer_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        sub.plan_name.toLowerCase().includes(searchQuery.toLowerCase());
+  const load = useCallback(() => {
+    setLoading(true);
+    subscriptionsApi
+      .list({
+        page: currentPage,
+        page_size: PAGE_SIZE,
+        status: statusFilter === 'all' ? undefined : statusFilter,
+        search: debouncedSearch.trim() || undefined,
+      })
+      .then((p) => {
+        setSubscriptions(p.items);
+        setTotalCount(p.total);
+      })
+      .catch((err) => toast({ type: 'error', title: 'Could not load subscriptions', message: errorMessage(err) }))
+      .finally(() => setLoading(false));
+  }, [currentPage, statusFilter, debouncedSearch, toast]);
 
-      const matchesStatus =
-        statusFilter === 'all' ? true : sub.status.toLowerCase() === statusFilter.toLowerCase();
+  useEffect(load, [load]);
 
-      return Boolean(matchesSearch && matchesStatus);
-    });
-  }, [subscriptions, searchQuery, statusFilter]);
-
-  // Stepper advancement logic
-  const getNextStatus = (current: SubscriptionStatus): SubscriptionStatus | null => {
-    switch (current) {
-      case 'draft':
-        return 'quotation';
-      case 'quotation':
-        return 'confirmed';
-      case 'confirmed':
-        return 'active';
-      default:
-        return null;
-    }
+  const applyUpdate = (updated: SubscriptionDetail) => {
+    setSelectedSub(updated);
+    setSubscriptions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
   };
 
-  const getNextButtonLabel = (current: SubscriptionStatus): string => {
-    switch (current) {
-      case 'draft':
-        return 'Send Quotation';
-      case 'quotation':
-        return 'Confirm Subscription';
-      case 'confirmed':
-        return 'Activate Subscription';
-      default:
-        return '';
-    }
-  };
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const firstRow = totalCount === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
 
-  const handleAdvanceStatus = () => {
+  // The forward step (never "closed": closing has its own confirmation).
+  const nextStatus = (sub: SubscriptionDetail): SubscriptionStatus | null =>
+    sub.allowed_transitions.find((s) => s !== 'closed') ?? null;
+
+  const handleAdvanceStatus = async () => {
     if (!selectedSub) return;
-    const next = getNextStatus(selectedSub.status);
+    const next = nextStatus(selectedSub);
     if (!next) return;
-
-    const updated: SubscriptionDetail = { ...selectedSub, status: next };
-    setSubscriptions((prev) => prev.map((s) => (s.id === selectedSub.id ? updated : s)));
-    setSelectedSub(updated);
-
-    toast({
-      type: 'success',
-      title: 'Status Updated',
-      message: `Subscription ${selectedSub.number} transitioned to ${next.toUpperCase()}.`,
-    });
+    setBusy(true);
+    try {
+      const updated = await subscriptionsApi.transition(selectedSub.id, next);
+      applyUpdate(updated);
+      toast({ type: 'success', title: 'Status Updated', message: `Subscription ${updated.number} is now ${updated.status}.` });
+    } catch (err) {
+      toast({ type: 'error', title: 'Could not change status', message: errorMessage(err) });
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const handleCloseSubscription = () => {
+  const handleCloseSubscription = async () => {
     if (!selectedSub) return;
-    const updated: SubscriptionDetail = { ...selectedSub, status: 'closed' };
-    setSubscriptions((prev) => prev.map((s) => (s.id === selectedSub.id ? updated : s)));
-    setSelectedSub(updated);
-    setIsCloseDialogOpen(false);
-
-    toast({
-      type: 'info',
-      title: 'Subscription Closed',
-      message: `Subscription ${selectedSub.number} has been closed.`,
-    });
+    setBusy(true);
+    try {
+      const updated = await subscriptionsApi.close(selectedSub.id);
+      applyUpdate(updated);
+      setIsCloseDialogOpen(false);
+      toast({ type: 'info', title: 'Subscription Closed', message: `Subscription ${updated.number} has been closed.` });
+    } catch (err) {
+      toast({ type: 'error', title: 'Could not close subscription', message: errorMessage(err) });
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const handleSelectTemplate = (template: QuotationTemplate) => {
-    const nextNumber = `SUB-${String(subscriptions.length + 1).padStart(4, '0')}`;
-    const today = new Date().toISOString().split('T')[0];
-    const expiry = new Date();
-    expiry.setDate(expiry.getDate() + template.validDays);
-
-    const newSub: SubscriptionDetail = {
-      id: Date.now(),
-      number: nextNumber,
-      customer_id: 102,
-      customer_name: 'Nexus Global Logistics',
-      plan_id: 10,
-      plan_name: template.planName,
-      plan: {
-        id: 10,
-        name: template.planName,
-        price: template.defaultPrice,
-        billing_period: 'monthly',
-        min_quantity: 1,
-        available_from: today,
-        available_to: null,
-        auto_close: false,
-        allow_early_close: true,
-        is_active: true,
-      },
-      status: template.id === 'tmpl-blank' ? 'draft' : 'quotation',
-      start_date: today,
-      expiry_date: expiry.toISOString().split('T')[0],
-      payment_terms_days: 15,
-      next_billing_date: today,
-      total_recurring_amount: template.defaultPrice,
-      lines: template.lines.map((l, idx) => ({
-        id: Date.now() + idx,
-        subscription_id: Date.now(),
-        product_id: 100 + idx,
-        product_name: l.productName,
-        variant_id: l.variantName ? 200 + idx : null,
-        variant_name: l.variantName || null,
-        quantity: l.quantity,
-        unit_price: l.unitPrice,
-        line_total: l.quantity * l.unitPrice,
-      })),
-      created_at: new Date().toISOString(),
-    };
-
-    setSubscriptions([newSub, ...subscriptions]);
-    setIsTemplatePickerOpen(false);
-    setSelectedSub(newSub);
-
-    toast({
-      type: 'success',
-      title: 'Quotation Created',
-      message: `Created ${newSub.number} using template "${template.name}".`,
-    });
-  };
-
-  const handlePrint = () => {
-    window.print();
+  const handleSaved = (saved: SubscriptionDetail) => {
+    if (formState.editing) {
+      applyUpdate(saved);
+    } else {
+      setSelectedSub(saved);
+      load();
+    }
   };
 
   return (
@@ -241,12 +117,12 @@ export const SubscriptionsBackOfficePage: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Subscriptions</h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Manage quotation templates, active subscription agreements, and contract lifecycles
+            Create quotations, move subscriptions through their lifecycle, and close contracts
           </p>
         </div>
 
         <button
-          onClick={() => setIsTemplatePickerOpen(true)}
+          onClick={() => setFormState({ open: true, editing: null })}
           className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold shadow-xs hover:bg-primary/90 transition-all self-start sm:self-auto"
         >
           <Plus className="w-4 h-4" />
@@ -256,24 +132,28 @@ export const SubscriptionsBackOfficePage: React.FC = () => {
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        {/* Search */}
         <div className="relative flex-1 max-w-md">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
             placeholder="Search by SUB-0001, customer name, plan..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setCurrentPage(1);
+            }}
             className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-border bg-card text-foreground focus:ring-1 focus:ring-primary focus:outline-hidden"
           />
         </div>
 
-        {/* Status Filter Tabs */}
         <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-lg border border-border overflow-x-auto">
           {['all', 'draft', 'quotation', 'confirmed', 'active', 'closed'].map((status) => (
             <button
               key={status}
-              onClick={() => setStatusFilter(status)}
+              onClick={() => {
+                setStatusFilter(status);
+                setCurrentPage(1);
+              }}
               className={cn(
                 'px-2.5 py-1 text-xs rounded-md capitalize font-medium transition-all whitespace-nowrap',
                 statusFilter === status
@@ -304,39 +184,35 @@ export const SubscriptionsBackOfficePage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filteredSubscriptions.length === 0 ? (
+              {loading && subscriptions.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center text-muted-foreground">
+                    Loading subscriptions...
+                  </td>
+                </tr>
+              ) : subscriptions.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-12 text-center text-muted-foreground">
                     No subscriptions found matching the selected filter.
                   </td>
                 </tr>
               ) : (
-                filteredSubscriptions.map((sub) => (
+                subscriptions.map((sub) => (
                   <tr
                     key={sub.id}
                     onClick={() => setSelectedSub(sub)}
-                    className="hover:bg-muted/20 transition-colors cursor-pointer"
+                    className={cn('hover:bg-muted/20 transition-colors cursor-pointer', loading && 'opacity-60')}
                   >
-                    <td className="py-3.5 px-4 font-mono font-medium text-foreground">
-                      {sub.number}
-                    </td>
-                    <td className="py-3.5 px-4 font-medium text-foreground">
-                      {sub.customer_name}
-                    </td>
-                    <td className="py-3.5 px-4 text-muted-foreground">
-                      {sub.plan_name}
-                    </td>
+                    <td className="py-3.5 px-4 font-mono font-medium text-foreground">{sub.number}</td>
+                    <td className="py-3.5 px-4 font-medium text-foreground">{sub.customer_name}</td>
+                    <td className="py-3.5 px-4 text-muted-foreground">{sub.plan_name}</td>
                     <td className="py-3.5 px-4">
                       <StatusBadge status={sub.status} />
                     </td>
-                    <td className="py-3.5 px-4 font-mono text-muted-foreground">
-                      {sub.start_date}
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-muted-foreground">
-                      {sub.next_billing_date || '—'}
-                    </td>
+                    <td className="py-3.5 px-4 font-mono text-muted-foreground">{sub.start_date}</td>
+                    <td className="py-3.5 px-4 font-mono text-muted-foreground">{sub.next_billing_date || '—'}</td>
                     <td className="py-3.5 px-4 text-right font-mono font-medium text-foreground">
-                      ₹{sub.total_recurring_amount.toLocaleString('en-IN')}
+                      {formatCurrency(sub.total)}
                     </td>
                     <td className="py-3.5 px-4 text-center">
                       <button
@@ -355,41 +231,79 @@ export const SubscriptionsBackOfficePage: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        <div className="p-3 border-t border-border bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground">
+          <span>
+            Showing {firstRow} to {Math.min(currentPage * PAGE_SIZE, totalCount)} of {totalCount} subscriptions
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="px-2.5 py-1 rounded-md border border-border bg-card text-foreground disabled:opacity-40 hover:bg-muted"
+            >
+              Previous
+            </button>
+            <span className="font-semibold text-foreground">
+              {currentPage} / {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage >= totalPages}
+              className="px-2.5 py-1 rounded-md border border-border bg-card text-foreground disabled:opacity-40 hover:bg-muted"
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Subscription Detail & Stepper Drawer */}
       <Drawer
-        isOpen={selectedSub !== null}
+        isOpen={selectedSub !== null && !formState.open}
         onClose={() => setSelectedSub(null)}
         title={selectedSub ? `${selectedSub.number} — ${selectedSub.customer_name}` : ''}
         description="Subscription quotation & contract lifecycle overview"
         footer={
           selectedSub && (
-            <div className="flex items-center justify-between w-full">
-              <button
-                onClick={handlePrint}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:bg-muted"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>Print</span>
-              </button>
+            <div className="flex items-center justify-between w-full gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => window.print()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:bg-muted"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print</span>
+                </button>
+                {EDITABLE.includes(selectedSub.status) && (
+                  <button
+                    onClick={() => setFormState({ open: true, editing: selectedSub })}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-muted"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span>Edit</span>
+                  </button>
+                )}
+              </div>
 
               <div className="flex items-center gap-2">
-                {selectedSub.status !== 'closed' && (
+                {selectedSub.can_close && (
                   <button
                     onClick={() => setIsCloseDialogOpen(true)}
+                    disabled={busy}
                     className="px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/60 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
                   >
                     Close
                   </button>
                 )}
 
-                {getNextStatus(selectedSub.status) && (
+                {nextStatus(selectedSub) && (
                   <button
                     onClick={handleAdvanceStatus}
-                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-all shadow-xs"
+                    disabled={busy}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-all shadow-xs disabled:opacity-50"
                   >
-                    <span>{getNextButtonLabel(selectedSub.status)}</span>
+                    <span>{busy ? 'Working...' : TRANSITION_LABELS[nextStatus(selectedSub)!]}</span>
                     <ChevronRight className="w-3.5 h-3.5" />
                   </button>
                 )}
@@ -400,15 +314,13 @@ export const SubscriptionsBackOfficePage: React.FC = () => {
       >
         {selectedSub && (
           <div className="space-y-6">
-            {/* Status Stepper (UX_DESIGN.md Section 3.3) */}
             <div className="p-3 bg-muted/20 border border-border rounded-xl">
               <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider mb-2 block">
-                Contract Lifecycle Stepper
+                Contract Lifecycle
               </span>
               <Stepper steps={STEPS} currentStep={selectedSub.status} />
             </div>
 
-            {/* General Info Grid */}
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-3 bg-muted/20 border border-border rounded-lg">
                 <span className="text-muted-foreground block text-[11px]">Customer</span>
@@ -428,11 +340,8 @@ export const SubscriptionsBackOfficePage: React.FC = () => {
               </div>
             </div>
 
-            {/* Line Items Table */}
             <div>
-              <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">
-                Quotation Line Items
-              </h4>
+              <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Lines</h4>
               <div className="border border-border rounded-lg overflow-hidden">
                 <table className="w-full text-xs">
                   <thead className="bg-muted/40 border-b border-border text-muted-foreground">
@@ -440,7 +349,8 @@ export const SubscriptionsBackOfficePage: React.FC = () => {
                       <th className="py-2 px-3 text-left">Product</th>
                       <th className="py-2 px-3 text-center">Qty</th>
                       <th className="py-2 px-3 text-right">Unit Price</th>
-                      <th className="py-2 px-3 text-right">Total</th>
+                      <th className="py-2 px-3 text-right">Tax</th>
+                      <th className="py-2 px-3 text-right">Amount</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -448,17 +358,16 @@ export const SubscriptionsBackOfficePage: React.FC = () => {
                       <tr key={line.id}>
                         <td className="py-2.5 px-3">
                           <div className="font-medium text-foreground">{line.product_name}</div>
-                          {line.variant_name && (
-                            <div className="text-[11px] text-muted-foreground">{line.variant_name}</div>
+                          {line.variant_label && (
+                            <div className="text-[11px] text-muted-foreground">{line.variant_label}</div>
                           )}
                         </td>
                         <td className="py-2.5 px-3 text-center font-mono">{line.quantity}</td>
-                        <td className="py-2.5 px-3 text-right font-mono">
-                          ₹{line.unit_price.toLocaleString('en-IN')}
+                        <td className="py-2.5 px-3 text-right font-mono">{formatCurrency(line.unit_price)}</td>
+                        <td className="py-2.5 px-3 text-right font-mono text-muted-foreground">
+                          {line.tax_name ? `${formatCurrency(line.tax_amount)} (${line.tax_name})` : '—'}
                         </td>
-                        <td className="py-2.5 px-3 text-right font-mono font-medium">
-                          ₹{line.line_total.toLocaleString('en-IN')}
-                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-medium">{formatCurrency(line.line_total)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -466,7 +375,6 @@ export const SubscriptionsBackOfficePage: React.FC = () => {
               </div>
             </div>
 
-            {/* Sticky Totals Panel (UX_DESIGN.md Section 3.3) */}
             <div className="p-4 bg-muted/30 border border-border rounded-xl space-y-2">
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>Payment Terms:</span>
@@ -474,79 +382,41 @@ export const SubscriptionsBackOfficePage: React.FC = () => {
               </div>
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>Billing Period:</span>
-                <span className="capitalize font-medium text-foreground">
-                  {selectedSub.plan.billing_period}
+                <span className="capitalize font-medium text-foreground">{selectedSub.billing_period}</span>
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Next Billing:</span>
+                <span className="font-mono font-medium text-foreground">{selectedSub.next_billing_date || '—'}</span>
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Subtotal / Tax:</span>
+                <span className="font-mono text-foreground">
+                  {formatCurrency(selectedSub.subtotal)} + {formatCurrency(selectedSub.tax_total)}
                 </span>
               </div>
               <div className="border-t border-border pt-2 flex justify-between text-sm font-bold text-foreground">
                 <span>Total Recurring / Period:</span>
-                <span className="font-mono text-primary">
-                  ₹{selectedSub.total_recurring_amount.toLocaleString('en-IN')}
-                </span>
+                <span className="font-mono text-primary">{formatCurrency(selectedSub.total)}</span>
               </div>
             </div>
           </div>
         )}
       </Drawer>
 
-      {/* Quotation Template Picker Modal (UX_DESIGN.md Section 3.3) */}
-      {isTemplatePickerOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div className="bg-card border border-border rounded-xl max-w-lg w-full p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-border">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-primary" />
-                <h3 className="font-semibold text-base text-foreground">New Subscription Quotation</h3>
-              </div>
-              <button
-                onClick={() => setIsTemplatePickerOpen(false)}
-                className="p-1 rounded-md text-muted-foreground hover:bg-muted"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      <SubscriptionFormDrawer
+        isOpen={formState.open}
+        subscription={formState.editing}
+        onClose={() => setFormState({ open: false, editing: null })}
+        onSaved={handleSaved}
+      />
 
-            <p className="text-xs text-muted-foreground">
-              Select a seeded quotation template to prefill standard plans and line items, or start blank:
-            </p>
-
-            <div className="space-y-3">
-              {SEEDED_TEMPLATES.map((tmpl) => (
-                <div
-                  key={tmpl.id}
-                  onClick={() => handleSelectTemplate(tmpl)}
-                  className="p-3.5 rounded-lg border border-border bg-card hover:border-primary hover:bg-muted/30 transition-all cursor-pointer group"
-                >
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors">
-                      {tmpl.name}
-                    </h4>
-                    {tmpl.defaultPrice > 0 && (
-                      <span className="text-xs font-mono font-medium text-foreground">
-                        ₹{tmpl.defaultPrice.toLocaleString('en-IN')}/mo
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-muted-foreground mt-1">{tmpl.description}</p>
-                  <div className="flex items-center gap-2 mt-2 text-[10px] text-muted-foreground">
-                    <span className="px-1.5 py-0.5 rounded bg-muted">Valid {tmpl.validDays} days</span>
-                    <span>•</span>
-                    <span>{tmpl.lines.length} default line items</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Close Subscription Confirmation Dialog */}
       <ConfirmDialog
         isOpen={isCloseDialogOpen}
         onCancel={() => setIsCloseDialogOpen(false)}
         onConfirm={handleCloseSubscription}
+        isLoading={busy}
         title="Close Subscription?"
-        description={`Closing ${selectedSub?.number} will terminate recurring billing runs. This action is recorded in the audit trail.`}
+        description={`Closing ${selectedSub?.number} stops all future billing runs for it. This cannot be undone.`}
         confirmLabel="Yes, Close Subscription"
         isDestructive={true}
       />

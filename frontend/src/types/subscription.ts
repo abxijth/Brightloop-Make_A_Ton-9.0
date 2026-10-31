@@ -5,66 +5,60 @@ export type SubscriptionStatus =
   | 'active'
   | 'closed';
 
-export type InvoiceStatus = 'draft' | 'confirmed' | 'paid';
-
 export type BillingPeriod = 'daily' | 'weekly' | 'monthly' | 'yearly';
-
-export interface PlanSummary {
-  id: number;
-  name: string;
-  price: number;
-  billing_period: BillingPeriod;
-  min_quantity: number;
-  available_from: string;
-  available_to: string | null;
-  auto_close: boolean;
-  allow_early_close: boolean;
-  is_active: boolean;
-}
 
 export interface SubscriptionLineItem {
   id: number;
-  subscription_id: number;
   product_id: number;
   product_name: string;
   variant_id: number | null;
-  variant_name?: string | null;
+  variant_label: string | null;
   quantity: number;
   unit_price: number;
   line_total: number;
+  tax_name: string | null;
+  tax_rate: number | null;
+  tax_amount: number;
 }
 
+/** Mirrors the backend `SubscriptionOut` (amounts converted to numbers). */
 export interface SubscriptionDetail {
   id: number;
   number: string;
   customer_id: number;
-  customer_name?: string;
+  customer_name: string;
+  customer_email: string;
   plan_id: number;
   plan_name: string;
-  plan: PlanSummary;
+  billing_period: BillingPeriod;
+  plan_allow_early_close: boolean;
+  plan_auto_close: boolean;
   status: SubscriptionStatus;
   start_date: string;
   expiry_date: string | null;
   payment_terms_days: number;
   next_billing_date: string | null;
-  total_recurring_amount: number;
   lines: SubscriptionLineItem[];
-  created_at: string;
-}
-
-export interface SubscriptionInvoiceSummary {
-  id: number;
-  number: string;
-  subscription_id: number;
-  period_start: string;
-  period_end: string;
-  status: InvoiceStatus;
-  issue_date: string;
-  due_date: string;
   subtotal: number;
-  discount_total: number;
   tax_total: number;
   total: number;
-  amount_paid: number;
-  amount_due: number;
+  allowed_transitions: SubscriptionStatus[];
+  can_close: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SubscriptionTemplate {
+  id: number;
+  name: string;
+  plan_id: number;
+  plan_name: string;
+  validity_days: number;
+  lines: {
+    product_id: number;
+    product_name: string;
+    variant_id: number | null;
+    variant_label: string | null;
+    quantity: number;
+  }[];
 }

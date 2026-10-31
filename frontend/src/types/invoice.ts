@@ -1,3 +1,7 @@
+export type InvoiceStatus = 'draft' | 'confirmed' | 'paid' | 'cancelled';
+
+export type PaymentMethod = 'cash' | 'bank_transfer' | 'card' | 'online' | 'other';
+
 export interface InvoiceLineItem {
   id: number;
   invoice_id: number;
@@ -12,18 +16,36 @@ export interface InvoiceLineItem {
   discount_rule_id?: number | null;
 }
 
+export interface PaymentRecord {
+  id: number;
+  invoice_id: number;
+  customer_id: number;
+  method: PaymentMethod;
+  amount: number;
+  payment_date: string;
+  note: string | null;
+  recorded_by_id: number | null;
+  created_at: string;
+  invoice_number?: string | null;
+  customer_name?: string | null;
+}
+
+/**
+ * Mirrors the backend `InvoiceOut` / `InvoiceDetailOut`. List rows come back
+ * without `lines` and `payments`; fetch the detail to fill them.
+ */
 export interface CustomerInvoice {
   id: number;
   number: string;
   subscription_id: number;
-  subscription_number?: string;
+  subscription_number?: string | null;
   customer_id: number;
   customer_name: string;
   customer_email: string;
-  customer_address?: string;
+  customer_address?: string | null;
   period_start: string;
   period_end: string;
-  status: 'draft' | 'confirmed' | 'paid';
+  status: InvoiceStatus;
   issue_date: string;
   due_date: string;
   subtotal: number;
@@ -33,4 +55,5 @@ export interface CustomerInvoice {
   amount_paid: number;
   amount_due: number;
   lines: InvoiceLineItem[];
+  payments: PaymentRecord[];
 }

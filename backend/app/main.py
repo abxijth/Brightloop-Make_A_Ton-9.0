@@ -10,6 +10,7 @@ from app.routers import (
     invoices,
     operations,
     outbox,
+    reports,
     staff,
     subscriptions,
 )
@@ -32,6 +33,7 @@ app.include_router(customers.router)
 app.include_router(invoices.router)
 app.include_router(operations.router)
 app.include_router(outbox.router)
+app.include_router(reports.router)
 app.include_router(staff.router)
 app.include_router(subscriptions.router)
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Calendar,
   CreditCard,
@@ -14,16 +14,46 @@ import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { useToast } from '../components/shared/Toast';
 import { formatCurrency, cn } from '../lib/utils';
 import { SubscriptionDetail } from '../types/subscription';
-import { MOCK_SUBSCRIPTIONS, MOCK_INVOICES_BY_SUBSCRIPTION } from '../lib/mockSubscriptions';
+import { CustomerInvoice } from '../types/invoice';
+import { errorMessage, invoicesApi, subscriptionsApi } from '../lib/billingApi';
 
 export const MySubscriptionsPage: React.FC = () => {
   const { toast } = useToast();
-  const [subscriptions, setSubscriptions] = useState<SubscriptionDetail[]>(MOCK_SUBSCRIPTIONS);
+  // The API scopes this list to the logged-in customer's own subscriptions.
+  const [subscriptions, setSubscriptions] = useState<SubscriptionDetail[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedSubscriptionId, setSelectedSubscriptionId] = useState<number | null>(null);
+  const [linkedInvoices, setLinkedInvoices] = useState<CustomerInvoice[]>([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+
+  useEffect(() => {
+    subscriptionsApi
+      .list({ page_size: 100 })
+      .then((p) => setSubscriptions(p.items))
+      .catch((err) => toast({ type: 'error', title: 'Could not load subscriptions', message: errorMessage(err) }))
+      .finally(() => setLoading(false));
+  }, [toast]);
+
+  useEffect(() => {
+    if (selectedSubscriptionId === null) {
+      setLinkedInvoices([]);
+      return;
+    }
+    let cancelled = false;
+    setInvoicesLoading(true);
+    invoicesApi
+      .list({ subscription_id: selectedSubscriptionId, page_size: 100 })
+      .then((p) => !cancelled && setLinkedInvoices(p.items))
+      .catch(() => !cancelled && setLinkedInvoices([]))
+      .finally(() => !cancelled && setInvoicesLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSubscriptionId]);
 
   // Filter subscriptions by status and search keyword
   const filteredSubscriptions = subscriptions.filter((sub) => {
@@ -36,39 +66,28 @@ export const MySubscriptionsPage: React.FC = () => {
   });
 
   const selectedSubscription = subscriptions.find((s) => s.id === selectedSubscriptionId) || null;
-  const linkedInvoices = selectedSubscriptionId
-    ? MOCK_INVOICES_BY_SUBSCRIPTION[selectedSubscriptionId] || []
-    : [];
 
   const handleCloseEarlyClick = () => {
     setIsCloseModalOpen(true);
   };
 
-  const handleConfirmCloseEarly = () => {
+  const handleConfirmCloseEarly = async () => {
     if (!selectedSubscription) return;
-
     setIsClosing(true);
-    setTimeout(() => {
-      setSubscriptions((prev) =>
-        prev.map((s) =>
-          s.id === selectedSubscription.id
-            ? {
-                ...s,
-                status: 'closed',
-                next_billing_date: null,
-                expiry_date: new Date().toISOString().split('T')[0],
-              }
-            : s
-        )
-      );
-      setIsClosing(false);
+    try {
+      const updated = await subscriptionsApi.close(selectedSubscription.id);
+      setSubscriptions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
       setIsCloseModalOpen(false);
       toast({
         type: 'success',
         title: 'Subscription Closed',
-        message: `Subscription ${selectedSubscription.number} has been closed early per your confirmation.`,
+        message: `Subscription ${updated.number} has been closed.`,
       });
-    }, 600);
+    } catch (err) {
+      toast({ type: 'error', title: 'Could not close subscription', message: errorMessage(err) });
+    } finally {
+      setIsClosing(false);
+    }
   };
 
   return (
@@ -123,7 +142,7 @@ export const MySubscriptionsPage: React.FC = () => {
                 <option value="active">Active</option>
                 <option value="confirmed">Confirmed</option>
                 <option value="closed">Closed</option>
-                <option value="draft">Draft</option>
+                <option value="quotation">Quotation</option>
               </select>
             </div>
           </div>
@@ -137,7 +156,11 @@ export const MySubscriptionsPage: React.FC = () => {
                 : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
             )}
           >
-            {filteredSubscriptions.length === 0 ? (
+            {loading ? (
+              <div className="col-span-full py-12 text-center text-xs text-muted-foreground">
+                Loading subscriptions...
+              </div>
+            ) : filteredSubscriptions.length === 0 ? (
               <div className="col-span-full py-12 text-center border border-dashed border-border rounded-xl bg-card/40 p-6">
                 <AlertCircle className="w-8 h-8 text-muted-foreground mx-auto mb-2 opacity-50" />
                 <p className="text-sm font-medium text-foreground">No subscriptions found</p>
@@ -197,10 +220,10 @@ export const MySubscriptionsPage: React.FC = () => {
 
                       <div className="text-right">
                         <span className="text-[10px] text-muted-foreground uppercase font-medium block">
-                          Amount / {sub.plan.billing_period}
+                          Amount / {sub.billing_period}
                         </span>
                         <span className="text-base font-bold text-foreground tracking-tight">
-                          {formatCurrency(sub.total_recurring_amount)}
+                          {formatCurrency(sub.total)}
                         </span>
                       </div>
                     </div>
@@ -236,7 +259,7 @@ export const MySubscriptionsPage: React.FC = () => {
                   <p className="text-xs text-muted-foreground">
                     Billed{' '}
                     <span className="capitalize font-medium text-foreground">
-                      {selectedSubscription.plan.billing_period}
+                      {selectedSubscription.billing_period}
                     </span>{' '}
                     &middot; Customer: {selectedSubscription.customer_name}
                   </p>
@@ -244,8 +267,7 @@ export const MySubscriptionsPage: React.FC = () => {
 
                 <div className="flex items-center gap-2 self-start">
                   {/* Close Early Action: conditionally shown only if plan allows early closing & not already closed */}
-                  {selectedSubscription.plan.allow_early_close &&
-                    selectedSubscription.status !== 'closed' && (
+                  {selectedSubscription.can_close && (
                       <button
                         onClick={handleCloseEarlyClick}
                         className="px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 hover:bg-red-100 dark:bg-red-950/40 dark:hover:bg-red-950/70 text-red-700 dark:text-red-400 text-xs font-semibold shadow-xs transition-all active:scale-95"
@@ -324,9 +346,9 @@ export const MySubscriptionsPage: React.FC = () => {
                             <div className="font-medium text-foreground">
                               {line.product_name}
                             </div>
-                            {line.variant_name && (
+                            {line.variant_label && (
                               <div className="text-[10px] text-muted-foreground">
-                                {line.variant_name}
+                                {line.variant_label}
                               </div>
                             )}
                           </td>
@@ -345,10 +367,10 @@ export const MySubscriptionsPage: React.FC = () => {
                     <tfoot className="bg-muted/30 border-t border-border font-semibold text-foreground">
                       <tr>
                         <td colSpan={3} className="px-3.5 py-2 text-right text-muted-foreground">
-                          Total Recurring Price ({selectedSubscription.plan.billing_period}):
+                          Total Recurring Price ({selectedSubscription.billing_period}):
                         </td>
                         <td className="px-3.5 py-2 text-right font-mono text-primary text-sm font-bold">
-                          {formatCurrency(selectedSubscription.total_recurring_amount)}
+                          {formatCurrency(selectedSubscription.total)}
                         </td>
                       </tr>
                     </tfoot>
@@ -370,7 +392,9 @@ export const MySubscriptionsPage: React.FC = () => {
                   </span>
                 </div>
 
-                {linkedInvoices.length === 0 ? (
+                {invoicesLoading ? (
+                  <div className="py-6 text-center text-xs text-muted-foreground">Loading invoices...</div>
+                ) : linkedInvoices.length === 0 ? (
                   <div className="py-6 text-center border border-dashed border-border rounded-lg bg-card/30">
                     <p className="text-xs text-muted-foreground">
                       No invoices have been generated for this subscription yet.
