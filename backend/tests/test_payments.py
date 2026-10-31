@@ -4,6 +4,8 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 from app.models import Customer, Invoice, InvoiceLine, InvoiceLineType, InvoiceStatus, UserRole
+from app.services.payments import record_payment
+from app.models.enums import PaymentMethod
 from tests.conftest import PASSWORD
 
 
@@ -93,3 +95,17 @@ def test_global_payments_ledger(client: TestClient, make_user, invoice_fixture):
     ledger = client.get("/payments").json()
     assert ledger["total"] >= 1
     assert any(p["invoice_id"] == inv.id for p in ledger["items"])
+
+
+def test_concurrent_payment_safety_validation(db, invoice_fixture):
+    """Verify record_payment checks balance atomically against invoice."""
+    inv, _ = invoice_fixture
+    # Pay 600
+    record_payment(db, invoice_id=inv.id, amount=Decimal("600.00"), method=PaymentMethod.BANK_TRANSFER)
+    assert inv.amount_paid == Decimal("600.00")
+    assert inv.status == InvoiceStatus.CONFIRMED
+
+    # Trying to pay 600 again should fail because 600 + 600 = 1200 > 1180
+    with pytest.raises(Exception) as excinfo:
+        record_payment(db, invoice_id=inv.id, amount=Decimal("600.00"), method=PaymentMethod.CARD)
+    assert "exceeds" in str(excinfo.value).lower()

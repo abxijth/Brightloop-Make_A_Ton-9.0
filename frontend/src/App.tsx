@@ -11,6 +11,7 @@ import { StaffPage } from './pages/StaffPage';
 import { OutboxPage } from './pages/OutboxPage';
 import { SubscriptionsBackOfficePage } from './pages/SubscriptionsBackOfficePage';
 import { InvoicesPage } from './pages/InvoicesPage';
+import { AccountPage } from './pages/AccountPage';
 import { BackOfficeInvoicesPage } from './pages/BackOfficeInvoicesPage';
 import { PaymentsPage } from './pages/PaymentsPage';
 
@@ -108,14 +109,7 @@ function AppRoutes() {
         <Route index element={<Navigate to="/portal/subscriptions" replace />} />
         <Route path="subscriptions" element={<MySubscriptionsPage />} />
         <Route path="invoices" element={<InvoicesPage />} />
-        <Route
-          path="account"
-          element={
-            <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl bg-card">
-              Account management coming soon.
-            </div>
-          }
-        />
+        <Route path="account" element={<AccountPage />} />
       </Route>
 
       {/* Default redirect: back-office dashboard */}

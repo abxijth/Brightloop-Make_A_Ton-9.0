@@ -3,6 +3,7 @@
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
+from html import escape
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, or_, select
@@ -12,8 +13,9 @@ from app.auth import get_current_user, require_customer, require_staff_or_admin
 from app.db import get_db
 from app.errors import AppError
 from app.models.customer import Customer
-from app.models.enums import InvoiceStatus
+from app.models.enums import EmailType, InvoiceStatus
 from app.models.invoice import Invoice
+from app.models.outbox import Outbox
 from app.models.payment import Payment
 from app.models.user import User
 from app.schemas.invoice import (
@@ -172,6 +174,66 @@ def confirm_invoice(invoice_id: int, db: DbSession):
         lines=invoice.lines,
         payments=invoice.payments,
     )
+
+
+@router.post("/invoices/{invoice_id}/cancel", response_model=InvoiceDetailOut, dependencies=[Depends(require_staff_or_admin)])
+def cancel_invoice(invoice_id: int, db: DbSession):
+    invoice = db.scalar(
+        select(Invoice)
+        .options(
+            joinedload(Invoice.customer),
+            selectinload(Invoice.lines),
+            selectinload(Invoice.payments),
+        )
+        .where(Invoice.id == invoice_id)
+        .with_for_update()
+    )
+    if not invoice:
+        raise AppError("Invoice not found.", code="not_found", status_code=404)
+
+    if invoice.amount_paid > Decimal("0"):
+        raise AppError("Cannot cancel an invoice with payments applied.", code="invalid_state", status_code=400)
+
+    invoice.status = InvoiceStatus.CANCELLED
+    db.commit()
+    db.refresh(invoice)
+
+    base = _to_invoice_out(invoice)
+    return InvoiceDetailOut(
+        **base.model_dump(),
+        lines=invoice.lines,
+        payments=invoice.payments,
+    )
+
+
+@router.post("/invoices/{invoice_id}/send", dependencies=[Depends(require_staff_or_admin)])
+def send_invoice_email(invoice_id: int, db: DbSession):
+    invoice = db.scalar(
+        select(Invoice)
+        .options(joinedload(Invoice.customer))
+        .where(Invoice.id == invoice_id)
+    )
+    if not invoice:
+        raise AppError("Invoice not found.", code="not_found", status_code=404)
+
+    to_email = invoice.customer.email if invoice.customer else "customer@example.com"
+    cust_name = invoice.customer.name if invoice.customer else "Customer"
+
+    db.add(
+        Outbox(
+            type=EmailType.INVOICE,
+            to_email=to_email,
+            subject=f"Invoice {invoice.number} from Brightloop",
+            body_html=(
+                f"<p>Dear {escape(cust_name)},</p>"
+                f"<p>Your invoice <strong>{invoice.number}</strong> for total amount ₹{invoice.total} is ready.</p>"
+                f"<p>Due date: {invoice.due_date}. Balance due: ₹{invoice.total - invoice.amount_paid}.</p>"
+            ),
+            invoice_id=invoice.id,
+        )
+    )
+    db.commit()
+    return {"message": f"Invoice {invoice.number} queued to outbox."}
 
 
 # ---------------------------------------------------------
