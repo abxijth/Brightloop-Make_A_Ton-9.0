@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.errors import register_error_handlers
-from app.routers import auth, customers, invoices, operations, outbox, staff
+from app.routers import auth, customers, discounts, invoices, operations, outbox, plans, products, staff, taxes
 
 app = FastAPI(title="Brightloop Subscription Management")
 
@@ -22,6 +22,10 @@ app.include_router(operations.router)
 app.include_router(outbox.router)
 app.include_router(staff.router)
 app.include_router(customers.router)
+app.include_router(taxes.router)
+app.include_router(products.router)
+app.include_router(plans.router)
+app.include_router(discounts.router)
 
 
 @app.get("/health", tags=["meta"])

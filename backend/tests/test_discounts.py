@@ -323,3 +323,39 @@ def test_product_scope_minimum_purchase_uses_that_products_amount(db):
 
     # The invoice subtotal (200) clears the minimum, but gadget lines total only 100.
     assert find_applicable_discounts(db, subscription, Decimal("200.00"), TODAY) == []
+
+
+def test_tax_calculated_on_the_discounted_amount(db):
+    """TEAM_PLAN.md: pytest for tax calculated on the discounted amount."""
+    from app.models.tax import Tax
+    from app.services.billing import build_invoice_draft
+
+    customer, plan, widget, _ = _catalog(db)
+    # Assign 10% VAT to the widget
+    vat = Tax(name="VAT 10%", type=ValueType.PERCENT, value=Decimal("10.00"), is_active=True)
+    db.add(vat)
+    db.flush()
+    widget.tax_id = vat.id
+    widget.tax = vat
+
+    # Widget unit price is 100.00 with 10% tax. Line total = 100.00.
+    subscription = _subscription(db, customer, plan, [(widget, 1)])
+    subscription.next_billing_date = TODAY
+    subscription.plan = plan
+    db.commit()
+
+    # 20.00 fixed discount on the subscription
+    rule = _rule(db, "Twenty off", value="20.00")
+
+    discounts = find_applicable_discounts(db, subscription, Decimal("100.00"), TODAY)
+    assert len(discounts) == 1
+    assert discounts[0].amount == Decimal("20.00")
+
+    # Build invoice draft with discounts applied
+    draft = build_invoice_draft(subscription, TODAY, discounts=discounts)
+    assert draft.subtotal == Decimal("100.00")
+    assert draft.discount_total == Decimal("20.00")
+    # Taxable base is discounted: 100 - 20 = 80.00. 10% tax on 80.00 = 8.00 (not 10.00 on 100)
+    assert draft.tax_total == Decimal("8.00")
+    assert draft.total == Decimal("88.00")
+
