@@ -17,6 +17,10 @@ import { BackOfficeInvoicesPage } from './pages/BackOfficeInvoicesPage';
 import { PaymentsPage } from './pages/PaymentsPage';
 import { CustomersPage } from './pages/CustomersPage';
 import { CustomerDetailPage } from './pages/CustomerDetailPage';
+import { ProductsPage } from './pages/ProductsPage';
+import { PlansPage } from './pages/PlansPage';
+import { TaxesPage } from './pages/TaxesPage';
+import { DiscountsPage } from './pages/DiscountsPage';
 
 function AppRoutes() {
   const [currentRole, setCurrentRole] = useState<UserRole>('admin');
@@ -56,38 +60,10 @@ function AppRoutes() {
         <Route path="/billing/outbox" element={<OutboxPage />} />
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/customers/:id" element={<CustomerDetailPage />} />
-        <Route
-          path="/catalog/products"
-          element={
-            <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl bg-card">
-              Products catalog coming soon.
-            </div>
-          }
-        />
-        <Route
-          path="/catalog/plans"
-          element={
-            <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl bg-card">
-              Plans management coming soon.
-            </div>
-          }
-        />
-        <Route
-          path="/config/taxes"
-          element={
-            <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl bg-card">
-              Tax rules coming soon.
-            </div>
-          }
-        />
-        <Route
-          path="/config/discounts"
-          element={
-            <div className="p-8 text-center text-muted-foreground border border-dashed rounded-xl bg-card">
-              Discount rules coming soon.
-            </div>
-          }
-        />
+        <Route path="/catalog/products" element={<ProductsPage />} />
+        <Route path="/catalog/plans" element={<PlansPage />} />
+        <Route path="/config/taxes" element={<TaxesPage />} />
+        <Route path="/config/discounts" element={<DiscountsPage />} />
         <Route path="/config/staff" element={<StaffPage />} />
       </Route>
 
