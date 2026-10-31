@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* LIGHT THEME: Fresh Yellow & Warm White / Slate */
+  :root {
+    --background: 48 100% 99%;          /* Clean warm white #fffef8 */
+    --foreground: 220 20% 12%;          /* Deep slate charcoal for crisp contrast */
+
+    --card: 0 0% 100%;                  /* Crisp white card surfaces */
+    --card-foreground: 220 20% 12%;
+
+    /* Brand Primary Yellow: High-energy warm amber-yellow */
+    --primary: 47 98% 50%;              /* #fbbd05 / vibrant yellow */
+    --primary-foreground: 35 100% 10%;  /* Rich dark amber-brown text on yellow */
+    --primary-hover: 45 96% 45%;
+
+    --secondary: 48 90% 95%;            /* Soft pastel yellow tint */
+    --secondary-foreground: 38 90% 20%;
+
+    --muted: 45 30% 95%;                /* Soft light neutral */
+    --muted-foreground: 220 10% 40%;    /* Legible neutral text */
+
+    --accent: 46 95% 90%;               /* Gentle amber accent highlight */
+    --accent-foreground: 35 90% 15%;
+
+    --border: 45 25% 88%;               /* Subtle warm border */
+    --input: 45 25% 88%;
+    --ring: 47 98% 50%;                 /* Yellow focus glow */
+
+    --radius: 0.625rem;
+
+    /* Status colors (harmonized with yellow palette) */
+    --status-draft: 215 16% 47%;        /* Slate grey */
+    --status-quotation: 217 91% 54%;    /* Vivid blue */
+    --status-confirmed: 245 80% 60%;    /* Indigo */
+    --status-active: 152 76% 36%;       /* Rich emerald green */
+    --status-closed: 215 25% 30%;       /* Deep slate */
+    --status-overdue: 0 84% 56%;        /* Alert red */
+  }
+
+  /* DARK THEME: Charcoal Amber & Glowing Golden Yellow */
+  .dark {
+    --background: 224 25% 7%;           /* Deep obsidian / night charcoal #0d1017 */
+    --foreground: 48 30% 96%;           /* Warm white text */
+
+    --card: 224 22% 10%;                /* Elevated dark slate surface */
+    --card-foreground: 48 30% 96%;
+
+    /* Golden Amber Yellow in dark mode */
+    --primary: 46 98% 54%;              /* Radiant gold yellow */
+    --primary-foreground: 45 95% 8%;    /* Deep contrast text */
+    --primary-hover: 48 100% 60%;
+
+    --secondary: 224 20% 14%;           /* Deep dark card secondary */
+    --secondary-foreground: 48 90% 90%;
+
+    --muted: 224 20% 15%;
+    --muted-foreground: 220 15% 65%;
+
+    --accent: 46 60% 18%;               /* Subtle dark gold glow */
+    --accent-foreground: 48 95% 90%;
+
+    --border: 224 20% 18%;              /* Dark crisp borders */
+    --input: 224 20% 18%;
+    --ring: 46 98% 54%;                 /* Radiant gold ring */
+
+    /* Status colors (luminous in dark mode) */
+    --status-draft: 215 16% 65%;
+    --status-quotation: 217 91% 68%;
+    --status-confirmed: 245 80% 75%;
+    --status-active: 152 70% 50%;
+    --status-closed: 215 20% 65%;
+    --status-overdue: 0 85% 65%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border transition-colors duration-200;
+  }
+  body {
+    @apply bg-background text-foreground antialiased selection:bg-primary/30 selection:text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* Subtle smooth animations & hover lifts */
+.card-hover-lift {
+  @apply transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md;
+}
+
+/* Print Stylesheet */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+}
